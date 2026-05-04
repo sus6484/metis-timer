@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Metis — 타이머</title>
+    <style>
+      :root {
+        --bg: #000;
+        --pink: #ff2da5;
+        --cyan: #38bdf8;
+        --text: #fff;
+        --muted: #94a3b8;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Pretendard, system-ui, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 24px 16px 40px;
+      }
+      .status-pill {
+        font-size: 0.85rem;
+        color: var(--muted);
+        margin-bottom: 8px;
+        letter-spacing: 0.06em;
+      }
+      h1 {
+        color: var(--pink);
+        font-size: clamp(1rem, 3vw, 1.35rem);
+        font-weight: 700;
+        text-align: center;
+        margin: 0 0 8px;
+        max-width: 90vw;
+      }
+      .level {
+        color: var(--pink);
+        font-size: 0.95rem;
+        letter-spacing: 0.12em;
+        margin-bottom: 12px;
+      }
+      .clock {
+        font-size: clamp(3rem, 14vw, 5.5rem);
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        margin-bottom: 20px;
+        line-height: 1;
+      }
+      .blinds {
+        text-align: center;
+        margin-bottom: 10px;
+        font-size: 1.05rem;
+      }
+      .blinds span.lab {
+        color: var(--pink);
+        font-size: 0.75rem;
+        letter-spacing: 0.1em;
+        margin-right: 8px;
+      }
+      .next-level {
+        text-align: center;
+        font-size: 0.9rem;
+        color: var(--muted);
+        margin-bottom: 28px;
+        max-width: 520px;
+        line-height: 1.5;
+      }
+      .next-level strong {
+        color: var(--cyan);
+      }
+      .stats {
+        color: var(--muted);
+        font-size: 0.875rem;
+        text-align: center;
+        line-height: 1.9;
+        max-width: 560px;
+      }
+      .stats strong {
+        color: var(--cyan);
+      }
+      .hint {
+        margin-top: 28px;
+        font-size: 0.72rem;
+        color: #64748b;
+        text-align: center;
+        max-width: 400px;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <p class="status-pill" id="el-status">대기중</p>
+    <p class="level" id="el-level">LEVEL —</p>
+    <h1 id="el-title">타이머</h1>
+    <div class="clock" id="el-clock">00:00</div>
+    <div class="blinds" id="el-blinds"></div>
+    <div class="next-level" id="el-next"></div>
+    <div class="stats" id="el-stats"></div>
+    <p class="hint">
+      리모컨의 <strong>재시작</strong>으로 카운트가 시작되고 <strong>정지</strong>로 멈춥니다. 레벨 종료 시 다음 블라인드로
+      자동 전환됩니다.
+    </p>
+
+    <script src="timer-core.js"></script>
+    <script>
+      (function () {
+        window.__METIS_IS_TIMER_PAGE = true;
+
+        function $(id) {
+          return document.getElementById(id);
+        }
+
+        function renderView(step) {
+          var s = step.state;
+          var rem = step.rem;
+          $("el-clock").textContent = MetisTimer.formatMMSS(rem);
+          $("el-title").textContent = s.tournamentName || "토너먼트";
+          $("el-level").textContent = "LEVEL " + (s.level || 1);
+          $("el-status").textContent = s.timerStatus || "대기중";
+
+          var levels = MetisTimer.getActiveLevels(s);
+          var li = Math.max(0, (parseInt(s.level, 10) || 1) - 1);
+          var L = levels && levels[li];
+          var NL = levels && levels[li + 1];
+
+          if (L) {
+            $("el-blinds").innerHTML =
+              '<span class="lab">BLINDS</span> ' +
+              L.sb +
+              " / " +
+              L.bb +
+              ' &nbsp; <span class="lab">ANTE</span> ' +
+              (L.ante != null ? L.ante : 0);
+          } else {
+            $("el-blinds").textContent = "프리셋을 선택해 주세요.";
+          }
+
+          if (NL) {
+            $("el-next").innerHTML =
+              "<strong>NEXT LEVEL " +
+              (li + 2) +
+              "</strong> — " +
+              NL.sb +
+              "/" +
+              NL.bb +
+              " (" +
+              (NL.ante != null ? NL.ante : 0) +
+              ")";
+          } else if (L && levels && li + 1 >= levels.length) {
+            $("el-next").innerHTML = "<strong>마지막 레벨</strong>";
+          } else {
+            $("el-next").textContent = "";
+          }
+
+          var pl = s.player != null ? s.player : 0;
+          var en = s.entry != null ? s.entry : 0;
+          var rb = s.rebuy != null ? s.rebuy : 0;
+          var ad = s.addon != null ? s.addon : 0;
+          $("el-stats").innerHTML =
+            "<strong>PLAYERS</strong> " +
+            pl +
+            " &nbsp; <strong>ENTRY</strong> " +
+            en +
+            " &nbsp; <strong>RE-BUY</strong> " +
+            rb +
+            " &nbsp; <strong>ADDON</strong> " +
+            ad;
+        }
+
+        function tick() {
+          MetisTimer.touchTimerWindowHeartbeat();
+          var step = MetisTimer.engineStep();
+          if (step) renderView(step);
+        }
+
+        function refreshFromBroadcast() {
+          var s = MetisTimer.readSyncState();
+          if (!s) return;
+          var now = Date.now();
+          var rem = MetisTimer.remainingSec(s, now);
+          renderView({ state: s, rem: rem, now: now });
+        }
+
+        setInterval(function () {
+          MetisTimer.touchTimerWindowHeartbeat();
+        }, MetisTimer.HEARTBEAT_MS);
+
+        setInterval(tick, 200);
+        MetisTimer.subscribeSync(refreshFromBroadcast);
+        window.addEventListener("storage", refreshFromBroadcast);
+
+        function clearHb() {
+          try {
+            localStorage.removeItem(MetisTimer.HEARTBEAT_KEY);
+          } catch (e) {}
+        }
+        window.addEventListener("beforeunload", clearHb);
+        window.addEventListener("pagehide", clearHb);
+
+        tick();
+      })();
+    </script>
+  </body>
+</html>

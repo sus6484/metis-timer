@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Metis — 홀덤 타이머 관리</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <!-- 인증 -->
+      <section id="screen-auth" class="screen auth-wrap" aria-label="관리자 인증">
+        <div class="auth-card">
+          <p class="auth-brand">Metis Timer</p>
+          <h1 class="auth-title">관리자 인증</h1>
+          <p class="auth-desc">6자리 숫자 비밀번호를 입력하세요.<br />최초 기본값은 000000 입니다.</p>
+          <div class="pin-row" role="group" aria-label="비밀번호 6자리">
+            <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="one-time-code" aria-label="1번째 자리" />
+            <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="2번째 자리" />
+            <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="3번째 자리" />
+            <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="4번째 자리" />
+            <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="5번째 자리" />
+            <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="6번째 자리" />
+          </div>
+          <p id="auth-error" class="auth-error" role="alert"></p>
+          <button type="button" id="btn-unlock" class="btn-primary">확인</button>
+          <p class="auth-foot">데이터는 이 브라우저의 LocalStorage에만 저장됩니다.</p>
+        </div>
+      </section>
+
+      <!-- 타이머 리모컨 -->
+      <section id="screen-remote" class="screen" aria-label="타이머 리모컨">
+        <header class="remote-header">
+          <h2 id="remote-title" class="remote-title">타이머 리모컨</h2>
+          <button type="button" id="btn-logout" class="btn-icon" title="잠금" aria-label="잠금 화면으로">×</button>
+        </header>
+
+        <div class="remote-body">
+          <div class="timer-banner">
+            <span id="timer-status" class="timer-status">대기중</span>
+            <span id="timer-clock" class="timer-clock">00:00</span>
+          </div>
+
+          <div class="grid-stats">
+            <div class="stat-card">
+              <div class="stat-label">Total Chips</div>
+              <div id="val-total-chips" class="stat-value">0</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Avg Stack</div>
+              <div id="val-avg-stack" class="stat-value">0</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Player</div>
+              <div id="val-player" class="stat-value">0</div>
+              <div class="stat-controls">
+                <button type="button" id="btn-player-minus" class="btn-step" aria-label="플레이어 감소">−</button>
+                <button type="button" id="btn-player-plus" class="btn-step" aria-label="플레이어 증가">+</button>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Entry</div>
+              <div id="val-entry" class="stat-value">0</div>
+              <div class="stat-controls">
+                <button type="button" id="btn-entry-minus" class="btn-step" aria-label="엔트리 감소">−</button>
+                <button type="button" id="btn-entry-plus" class="btn-step" aria-label="엔트리 증가">+</button>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Rebuy</div>
+              <div id="val-rebuy" class="stat-value">0</div>
+              <div class="stat-controls">
+                <button type="button" id="btn-rebuy-minus" class="btn-step" aria-label="리바인 감소">−</button>
+                <button type="button" id="btn-rebuy-plus" class="btn-step" aria-label="리바인 증가">+</button>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Addon</div>
+              <div id="val-addon" class="stat-value">0</div>
+              <div class="stat-controls">
+                <button type="button" id="btn-addon-minus" class="btn-step" aria-label="애드온 감소">−</button>
+                <button type="button" id="btn-addon-plus" class="btn-step" aria-label="애드온 증가">+</button>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Early</div>
+              <div id="val-early" class="stat-value">0</div>
+              <div class="stat-controls">
+                <button type="button" id="btn-early-minus" class="btn-step" aria-label="얼리 감소">−</button>
+                <button type="button" id="btn-early-plus" class="btn-step" aria-label="얼리 증가">+</button>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Level</div>
+              <div id="val-level" class="stat-value">1</div>
+              <div class="stat-controls">
+                <button type="button" id="btn-level-minus" class="btn-step" aria-label="레벨 감소">−</button>
+                <button type="button" id="btn-level-plus" class="btn-step" aria-label="레벨 증가">+</button>
+              </div>
+            </div>
+          </div>
+
+          <h3 class="section-title">블라인드 프리셋 (대회 리스트 간소화)</h3>
+          <div class="preset-bar">
+            <select id="preset-select" aria-label="적용할 프리셋"></select>
+            <button type="button" id="btn-preset-add" class="btn-sm purple">프리셋 추가</button>
+          </div>
+          <div class="preset-table-wrap">
+            <table class="preset-table">
+              <thead>
+                <tr>
+                  <th style="width: 48px">No</th>
+                  <th>이름</th>
+                  <th style="width: 72px">레벨 수</th>
+                  <th style="min-width: 200px">동작</th>
+                </tr>
+              </thead>
+              <tbody id="preset-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <footer class="remote-footer">
+          <div class="remote-footer-row">
+            <button type="button" id="btn-restart" class="btn-timer-action orange">재시작</button>
+            <button type="button" id="btn-pause" class="btn-timer-action gray">정지</button>
+          </div>
+          <button type="button" id="btn-open-timer" class="btn-open-timer">타이머 열기</button>
+        </footer>
+      </section>
+    </div>
+
+    <!-- 프리셋 편집 모달 -->
+    <div id="modal-preset" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal" id="modal-preset-panel">
+        <h3 id="modal-title">프리셋</h3>
+        <label for="modal-name">프리셋 이름</label>
+        <input id="modal-name" type="text" maxlength="80" />
+        <label for="modal-levels">레벨 JSON (sb, bb, ante, minutes 배열)</label>
+        <textarea id="modal-levels" spellcheck="false"></textarea>
+        <div class="modal-actions">
+          <button type="button" id="modal-cancel" class="modal-cancel">취소</button>
+          <button type="button" id="modal-save" class="modal-save">저장</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="timer-core.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
