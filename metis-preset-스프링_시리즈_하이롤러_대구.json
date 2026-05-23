@@ -1,0 +1,259 @@
+{
+  "metisPresetExport": 1,
+  "exportedAt": "2026-05-19T01:10:00.184Z",
+  "preset": {
+    "name": "스프링 시리즈 하이롤러 대구",
+    "levels": [
+      {
+        "sb": 200,
+        "bb": 400,
+        "ante": 400,
+        "minutes": 1
+      },
+      {
+        "sb": 200,
+        "bb": 500,
+        "ante": 500,
+        "minutes": 1
+      },
+      {
+        "sb": 300,
+        "bb": 600,
+        "ante": 600,
+        "minutes": 1
+      },
+      {
+        "sb": 400,
+        "bb": 800,
+        "ante": 800,
+        "minutes": 1
+      },
+      {
+        "type": "break",
+        "minutes": 1,
+        "adUrl": "0429.mp4"
+      },
+      {
+        "sb": 500,
+        "bb": 1000,
+        "ante": 1000,
+        "minutes": 1
+      },
+      {
+        "sb": 600,
+        "bb": 1200,
+        "ante": 1200,
+        "minutes": 1
+      },
+      {
+        "sb": 800,
+        "bb": 1600,
+        "ante": 1600,
+        "minutes": 1
+      },
+      {
+        "sb": 1000,
+        "bb": 2000,
+        "ante": 2000,
+        "minutes": 1
+      },
+      {
+        "type": "break",
+        "minutes": 10,
+        "adUrl": "0429.mp4"
+      },
+      {
+        "sb": 1500,
+        "bb": 2500,
+        "ante": 2500,
+        "minutes": 1
+      },
+      {
+        "sb": 1500,
+        "bb": 3000,
+        "ante": 3000,
+        "minutes": 1
+      },
+      {
+        "sb": 2000,
+        "bb": 4000,
+        "ante": 4000,
+        "minutes": 1
+      },
+      {
+        "sb": 2500,
+        "bb": 5000,
+        "ante": 5000,
+        "minutes": 1
+      },
+      {
+        "type": "break",
+        "minutes": 10,
+        "adUrl": "0429.mp4"
+      },
+      {
+        "sb": 3000,
+        "bb": 6000,
+        "ante": 6000,
+        "minutes": 1
+      },
+      {
+        "sb": 4000,
+        "bb": 8000,
+        "ante": 8000,
+        "minutes": 1
+      },
+      {
+        "sb": 5000,
+        "bb": 10000,
+        "ante": 10000,
+        "minutes": 1
+      },
+      {
+        "sb": 6000,
+        "bb": 12000,
+        "ante": 12000,
+        "minutes": 1
+      },
+      {
+        "type": "break",
+        "minutes": 10,
+        "adUrl": "0429.mp4"
+      },
+      {
+        "sb": 8000,
+        "bb": 16000,
+        "ante": 16000,
+        "minutes": 1
+      },
+      {
+        "sb": 10000,
+        "bb": 20000,
+        "ante": 20000,
+        "minutes": 1
+      },
+      {
+        "sb": 10000,
+        "bb": 25000,
+        "ante": 24999,
+        "minutes": 1
+      },
+      {
+        "sb": 15000,
+        "bb": 30000,
+        "ante": 29998,
+        "minutes": 1
+      },
+      {
+        "type": "break",
+        "minutes": 10,
+        "adUrl": "0429.mp4"
+      },
+      {
+        "sb": 20000,
+        "bb": 40000,
+        "ante": 40000,
+        "minutes": 1
+      },
+      {
+        "sb": 25000,
+        "bb": 50000,
+        "ante": 50000,
+        "minutes": 1
+      },
+      {
+        "sb": 29998,
+        "bb": 60000,
+        "ante": 59999,
+        "minutes": 1
+      },
+      {
+        "sb": 40000,
+        "bb": 80000,
+        "ante": 80000,
+        "minutes": 1
+      },
+      {
+        "type": "break",
+        "minutes": 10,
+        "adUrl": "0429.mp4"
+      },
+      {
+        "sb": 50000,
+        "bb": 10000,
+        "ante": 10000,
+        "minutes": 1
+      },
+      {
+        "sb": 60000,
+        "bb": 120000,
+        "ante": 120000,
+        "minutes": 1
+      },
+      {
+        "sb": 70000,
+        "bb": 140000,
+        "ante": 140000,
+        "minutes": 1
+      },
+      {
+        "sb": 80000,
+        "bb": 160000,
+        "ante": 159996,
+        "minutes": 1
+      },
+      {
+        "type": "break",
+        "minutes": 10,
+        "adUrl": "0429.mp4"
+      },
+      {
+        "sb": 100000,
+        "bb": 200000,
+        "ante": 200000,
+        "minutes": 1
+      },
+      {
+        "sb": 120000,
+        "bb": 240000,
+        "ante": 240000,
+        "minutes": 1
+      }
+    ],
+    "tournamentName": "METIS\nSPRING SERIES HIGH ROLLER in DAEGU",
+    "totalPrizeText": "15,000,000",
+    "tournamentInfo": "흡연 : 1층X 옥상O\n민원이 많습니다",
+    "prizeText": "",
+    "prizeItems": [
+      {
+        "rank": "1st",
+        "amount": 10000000
+      },
+      {
+        "rank": "2nd",
+        "amount": 5000000
+      },
+      {
+        "rank": "3rd",
+        "amount": 3000000
+      },
+      {
+        "rank": "4th",
+        "amount": 2000000
+      },
+      {
+        "rank": "5th",
+        "amount": 500000
+      },
+      {
+        "rank": "6th",
+        "amount": 200000
+      }
+    ],
+    "player": 5,
+    "entry": 14,
+    "entryChips": 50000,
+    "regCloseLevel": 15,
+    "regCloseAfterPlayLevel": 5
+  }
+}

@@ -4,15 +4,130 @@
 (function (global) {
   "use strict";
 
-  var STORAGE_KEY = "metis_timer_sync";
+  var LEGACY_SYNC_KEY = "metis_timer_sync";
   var HEARTBEAT_KEY = "metis_timer_window_alive";
   var HEARTBEAT_MS = 400;
   var WINDOW_STALE_MS = 1400;
 
-  var bc =
-    typeof BroadcastChannel !== "undefined"
-      ? new BroadcastChannel("metis-timer")
-      : null;
+  var syncPresetId =
+    global.__METIS_TIMER_PRESET_ID != null && global.__METIS_TIMER_PRESET_ID !== ""
+      ? String(global.__METIS_TIMER_PRESET_ID)
+      : "";
+
+  var bc = null;
+
+  function getSyncStorageKey() {
+    return syncPresetId ? "timer_state_" + syncPresetId : LEGACY_SYNC_KEY;
+  }
+
+  function getHeartbeatStorageKey() {
+    return syncPresetId ? "metis_timer_window_alive_" + syncPresetId : HEARTBEAT_KEY;
+  }
+
+  function reconnectBroadcastChannel() {
+    if (typeof BroadcastChannel === "undefined") {
+      bc = null;
+      return;
+    }
+    try {
+      if (bc && bc.close) bc.close();
+    } catch (e1) {}
+    try {
+      bc = new BroadcastChannel("metis-timer-" + (syncPresetId || "legacy"));
+    } catch (e2) {
+      bc = null;
+    }
+  }
+
+  function setSyncPresetId(id) {
+    syncPresetId = id != null && id !== "" ? String(id) : "";
+    reconnectBroadcastChannel();
+  }
+
+  function getSyncPresetId() {
+    return syncPresetId;
+  }
+
+  var PRESETS_STORAGE_KEY = "metis_blindPresets";
+
+  var PRESET_EMBED_KEYS = [
+    "tournamentName",
+    "totalPrizeText",
+    "tournamentInfo",
+    "prizeText",
+    "prizeItems",
+    "player",
+    "entry",
+    "entryChips",
+    "regCloseLevel",
+  ];
+
+  function loadPresetsFromStorage() {
+    try {
+      var raw = localStorage.getItem(PRESETS_STORAGE_KEY);
+      if (!raw) return [];
+      var arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function savePresetsToStorage(presets) {
+    try {
+      localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets));
+    } catch (e) {}
+  }
+
+  function defaultTournamentFields() {
+    return {
+      tournamentName: "내 토너먼트",
+      prizeText: "",
+      prizeItems: [],
+      totalPrizeText: "",
+      tournamentInfo: "",
+      player: 0,
+      entry: 0,
+      entryChips: 50000,
+      regCloseLevel: 15,
+    };
+  }
+
+  function tournamentFieldsFromPreset(p) {
+    var d = defaultTournamentFields();
+    if (!p || typeof p !== "object") return d;
+    for (var i = 0; i < PRESET_EMBED_KEYS.length; i++) {
+      var k = PRESET_EMBED_KEYS[i];
+      if (p[k] !== undefined) d[k] = p[k];
+    }
+    return d;
+  }
+
+  function mergePresetsIntoState(state) {
+    if (!state || typeof state !== "object") return;
+    state.presets = loadPresetsFromStorage();
+    if (syncPresetId) state.activePresetId = syncPresetId;
+  }
+
+  function embedActivePresetTournament(state) {
+    if (!state || typeof state !== "object" || !syncPresetId) return;
+    var presets = loadPresetsFromStorage();
+    var idx = -1;
+    for (var i = 0; i < presets.length; i++) {
+      if (presets[i].id === syncPresetId) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) return;
+    for (var j = 0; j < PRESET_EMBED_KEYS.length; j++) {
+      var key = PRESET_EMBED_KEYS[j];
+      if (state[key] !== undefined) presets[idx][key] = state[key];
+    }
+    savePresetsToStorage(presets);
+  }
+
+  reconnectBroadcastChannel();
 
   function defaultTimer() {
     return {
@@ -20,6 +135,7 @@
       levelIndex: 0,
       endAt: null,
       pausedRemainingSec: 0,
+      bridge: null,
     };
   }
 
@@ -27,19 +143,54 @@
     return Math.max(lo, Math.min(hi, n));
   }
 
-  function getActiveLevels(state) {
+  function getActivePreset(state) {
     if (!state || !state.presets || !state.activePresetId) return null;
     var p = state.presets.filter(function (x) {
       return x.id === state.activePresetId;
     })[0];
+    return p || null;
+  }
+
+  function getActiveLevels(state) {
+    var p = getActivePreset(state);
     if (!p || !Array.isArray(p.levels) || !p.levels.length) return null;
     return p.levels;
+  }
+
+  /** 브레이크 구간 (쉬는 시간). type === 'break' 인 행만 브레이크로 처리합니다. */
+  function isBreakRow(row) {
+    return !!(row && row.type === "break");
   }
 
   function levelDurationSec(level) {
     var m = Number(level && level.minutes);
     if (!Number.isFinite(m) || m <= 0) m = 20;
     return Math.max(1, Math.round(m * 60));
+  }
+
+  function isPlayLevelRunning(state, timerObj) {
+    if (!state || !timerObj || !timerObj.isRunning || timerObj.bridge) return false;
+    var levels = getActiveLevels(state);
+    if (!levels || !levels.length) return false;
+    var idx = clamp(parseInt(timerObj.levelIndex, 10) || 0, 0, levels.length - 1);
+    return !isBreakRow(levels[idx]);
+  }
+
+  function ensureTotalSecondsState(state) {
+    if (!state || typeof state !== "object") return;
+    if ("totalActiveMs" in state) delete state.totalActiveMs;
+    if ("totalActiveAnchorMs" in state) delete state.totalActiveAnchorMs;
+    state.totalSeconds = 0;
+    state.totalSecondsTickAt = null;
+  }
+
+  function syncTotalSeconds(state, now) {
+    ensureTotalSecondsState(state);
+  }
+
+  function getTotalSeconds(state) {
+    ensureTotalSecondsState(state);
+    return 0;
   }
 
   function formatMMSS(totalSec) {
@@ -69,15 +220,39 @@
     var maxI = levels ? levels.length - 1 : 0;
     out.levelIndex = clamp(out.levelIndex, 0, Math.max(0, maxI));
     if (!Number.isFinite(out.endAt)) out.endAt = null;
+    var br = t.bridge;
+    if (
+      br &&
+      typeof br === "object" &&
+      (br.kind === "preWait" || br.kind === "startGo") &&
+      Number.isFinite(Number(br.until))
+    ) {
+      out.bridge = { kind: br.kind, until: Number(br.until) };
+    } else {
+      out.bridge = null;
+    }
     return out;
   }
 
   function readSyncState() {
     try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
-      var state = JSON.parse(raw);
+      var raw = localStorage.getItem(getSyncStorageKey());
+      var state = null;
+      if (!raw) {
+        state = buildInitialTimerState();
+        if (!state) return null;
+      } else {
+        state = JSON.parse(raw);
+      }
+      delete state.rebuy;
+      delete state.addon;
+      delete state.rebuyChips;
+      delete state.addonChips;
+      delete state.early;
+      delete state.earlyChips;
+      mergePresetsIntoState(state);
       state.timer = normalizeTimer(state.timer, state);
+      ensureTotalSecondsState(state);
       syncLevelField(state);
       return state;
     } catch (e) {
@@ -87,21 +262,20 @@
 
   var REMOTE_KEYS = [
     "tournamentName",
+    "totalPrizeText",
+    "tournamentInfo",
+    "prizeText",
+    "prizeItems",
+    "regCloseAt",
     "timerStatus",
     "displayTime",
     "totalChips",
     "avgStack",
     "player",
     "entry",
-    "rebuy",
-    "addon",
-    "early",
     "level",
     "entryChips",
-    "earlyChips",
     "regCloseLevel",
-    "rebuyChips",
-    "addonChips",
   ];
 
   function pickRemoteSlice(state) {
@@ -110,6 +284,13 @@
     for (var i = 0; i < REMOTE_KEYS.length; i++) {
       var k = REMOTE_KEYS[i];
       if (state[k] !== undefined) out[k] = state[k];
+    }
+    if (
+      !(out.prizeText && String(out.prizeText).trim()) &&
+      state.guaranteedPrize != null
+    ) {
+      var n = Math.floor(Number(state.guaranteedPrize) || 0);
+      if (n > 0) out.prizeText = n.toLocaleString("ko-KR") + " 원";
     }
     return out;
   }
@@ -124,9 +305,11 @@
   }
 
   function writeSyncState(state) {
+    mergePresetsIntoState(state);
+    embedActivePresetTournament(state);
     state.updatedAt = Date.now();
     var str = JSON.stringify(state);
-    localStorage.setItem(STORAGE_KEY, str);
+    localStorage.setItem(getSyncStorageKey(), str);
     mirrorRemoteStorage(state);
     if (bc) {
       try {
@@ -138,6 +321,9 @@
   function remainingSec(state, now) {
     var t = state.timer;
     if (!t) return 0;
+    if (t.bridge && t.bridge.until != null && Number.isFinite(t.bridge.until)) {
+      return Math.max(0, Math.ceil((t.bridge.until - now) / 1000));
+    }
     if (t.isRunning && t.endAt != null) {
       return Math.max(0, Math.ceil((t.endAt - now) / 1000));
     }
@@ -155,7 +341,78 @@
     state.level = t.levelIndex + 1;
   }
 
-  function applyRestart(state, now) {
+  function buildInitialTimerState() {
+    var presets = loadPresetsFromStorage();
+    if (!syncPresetId) return null;
+    var p = null;
+    for (var i = 0; i < presets.length; i++) {
+      if (presets[i].id === syncPresetId) {
+        p = presets[i];
+        break;
+      }
+    }
+    if (!p) return null;
+    var tour = tournamentFieldsFromPreset(p);
+    var levels = p.levels && p.levels.length ? p.levels : null;
+    var dur = levels && levels.length ? levelDurationSec(levels[0]) : 0;
+    var state = Object.assign({}, tour, {
+      presets: presets,
+      activePresetId: syncPresetId,
+      timer: defaultTimer(),
+      timerStatus: "대기중",
+      displayTime: levels && levels.length ? formatMMSS(dur) : "00:00",
+      level: 1,
+      regCloseAt: null,
+      pendingBridge: null,
+      hasStartedOnce: false,
+    });
+    if (levels && levels.length) {
+      state.timer.levelIndex = 0;
+      state.timer.pausedRemainingSec = dur;
+    }
+    ensureTotalSecondsState(state);
+    syncLevelField(state);
+    return state;
+  }
+
+  /**
+   * 일시정지 후 남은 시간 그대로 이어서 시작. 남은 시간이 0이면 현재 레벨 풀타임으로 시작.
+   * 이미 진행 중이면 변경 없음.
+   */
+  function applyResume(state, now) {
+    var levels = getActiveLevels(state);
+    if (!levels || !levels.length) {
+      state.timerStatus = "프리셋 없음";
+      return state;
+    }
+    var t = normalizeTimer(state.timer, state);
+    state.timer = t;
+    if (t.isRunning) {
+      syncLevelField(state);
+      state.displayTime = formatMMSS(remainingSec(state, now));
+      return state;
+    }
+    syncLevelField(state);
+    var rem = Math.max(0, Math.floor(t.pausedRemainingSec || 0));
+    if (rem <= 0) {
+      rem = levelDurationSec(levels[t.levelIndex]);
+    }
+    t.bridge = null;
+    state.pendingBridge = null;
+    t.pausedRemainingSec = rem;
+    t.isRunning = true;
+    t.endAt = now + rem * 1000;
+    state.hasStartedOnce = true;
+    state.timerStatus = "진행중";
+    state.displayTime = formatMMSS(rem);
+    return state;
+  }
+
+  /**
+   * 현재 레벨 남은 시간을 프리셋 풀타임으로 맞추고 정지(대기). 진행 중이면 먼저 멈춘 뒤 리셋.
+   */
+  function applyLevelRefresh(state, now) {
+    syncTotalSeconds(state, now);
     var levels = getActiveLevels(state);
     if (!levels || !levels.length) {
       state.timerStatus = "프리셋 없음";
@@ -165,25 +422,113 @@
     state.timer = t;
     syncLevelField(state);
     var dur = levelDurationSec(levels[t.levelIndex]);
-    t.isRunning = true;
-    t.endAt = now + dur * 1000;
+    t.isRunning = false;
+    t.endAt = null;
+    t.bridge = null;
+    state.pendingBridge = null;
     t.pausedRemainingSec = dur;
-    state.timerStatus = "진행중";
+    state.hasStartedOnce = false;
+    state.timerStatus = "대기중";
     state.displayTime = formatMMSS(dur);
     return state;
   }
 
-  function applyPause(state, now) {
+  /**
+   * 관리자 시작: 프리셋에 N분 대기(옵션) → 남은 3초는 띵(표시·오디오는 클라이언트).
+   * 대기가 없으면 3초 startGo 브리지만 두고, 만료 시 applyResume으로 실제 타이머 시작.
+   */
+  function applyStartSequence(state, now) {
+    var levels = getActiveLevels(state);
+    if (!levels || !levels.length) {
+      state.timerStatus = "프리셋 없음";
+      return state;
+    }
     var t = normalizeTimer(state.timer, state);
     state.timer = t;
-    var rem = remainingSec({ timer: t }, now);
-    if (t.isRunning && t.endAt != null) {
-      rem = Math.max(0, Math.ceil((t.endAt - now) / 1000));
+    if (t.isRunning || t.bridge) {
+      return state;
     }
+    if (
+      state.pendingBridge &&
+      typeof state.pendingBridge === "object" &&
+      (state.pendingBridge.kind === "preWait" ||
+        state.pendingBridge.kind === "startGo")
+    ) {
+      var pendingRem = Math.floor(Number(state.pendingBridge.remainingSec) || 0);
+      if (pendingRem > 0) {
+        t.bridge = {
+          kind: state.pendingBridge.kind,
+          until: now + pendingRem * 1000,
+        };
+        state.timerStatus =
+          state.pendingBridge.kind === "preWait" ? "대기 타이머" : "시작 준비";
+        state.displayTime = formatMMSS(remainingSec(state, now));
+        state.pendingBridge = null;
+        return state;
+      }
+      state.pendingBridge = null;
+    }
+    syncLevelField(state);
+    var dur = levelDurationSec(levels[t.levelIndex]);
+    var rem = Math.max(0, Math.floor(t.pausedRemainingSec || 0));
+    if (rem <= 0) rem = dur;
     t.pausedRemainingSec = rem;
     t.isRunning = false;
     t.endAt = null;
-    state.timerStatus = "정지";
+
+    var preset = getActivePreset(state);
+    var wm = 0;
+    if (preset && preset.preGameWaitMinutes != null) {
+      wm = Math.floor(Number(preset.preGameWaitMinutes));
+      if (!Number.isFinite(wm) || wm < 0) wm = 0;
+      wm = Math.min(999, wm);
+    }
+    var canUseReadyTimer = !state.hasStartedOnce && t.levelIndex === 0;
+    if (wm > 0 && canUseReadyTimer) {
+      t.bridge = { kind: "preWait", until: now + wm * 60 * 1000 };
+      state.timerStatus = "대기 타이머";
+    } else {
+      t.bridge = { kind: "startGo", until: now + 3000 };
+      state.timerStatus = "시작 준비";
+    }
+    state.pendingBridge = null;
+    state.displayTime = formatMMSS(remainingSec(state, now));
+    return state;
+  }
+
+  function applyPause(state, now) {
+    syncTotalSeconds(state, now);
+    var t = normalizeTimer(state.timer, state);
+    state.timer = t;
+    if (t.bridge && Number.isFinite(t.bridge.until)) {
+      var bridgeRem = Math.max(0, Math.ceil((t.bridge.until - now) / 1000));
+      state.pendingBridge = {
+        kind: t.bridge.kind,
+        remainingSec: bridgeRem,
+      };
+      t.bridge = null;
+      state.timerStatus = "일시정지";
+      state.displayTime = formatMMSS(bridgeRem);
+      return state;
+    }
+    t.bridge = null;
+    state.pendingBridge = null;
+    if (!t.isRunning) {
+      if (
+        state.timerStatus === "대기 타이머" ||
+        state.timerStatus === "시작 준비"
+      ) {
+        state.timerStatus = "대기중";
+      }
+      syncLevelField(state);
+      state.displayTime = formatMMSS(remainingSec(state, now));
+      return state;
+    }
+    var rem = Math.max(0, Math.ceil((t.endAt - now) / 1000));
+    t.pausedRemainingSec = rem;
+    t.isRunning = false;
+    t.endAt = null;
+    state.timerStatus = "일시정지";
     state.displayTime = formatMMSS(rem);
     return state;
   }
@@ -197,6 +542,11 @@
     state.timer = t;
     var levels = getActiveLevels(state);
     if (!canOwn || !levels || !levels.length) {
+      syncLevelField(state);
+      state.displayTime = formatMMSS(remainingSec(state, now));
+      return { state: state, advanced: false, finished: false, leveledUp: false };
+    }
+    if (t.bridge) {
       syncLevelField(state);
       state.displayTime = formatMMSS(remainingSec(state, now));
       return { state: state, advanced: false, finished: false, leveledUp: false };
@@ -232,7 +582,7 @@
   }
 
   function isTimerWindowLikelyOpen(now) {
-    var v = Number(localStorage.getItem(HEARTBEAT_KEY) || 0);
+    var v = Number(localStorage.getItem(getHeartbeatStorageKey()) || 0);
     if (!Number.isFinite(v)) return false;
     return now - v < WINDOW_STALE_MS;
   }
@@ -244,7 +594,7 @@
 
   function touchTimerWindowHeartbeat() {
     try {
-      localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
+      localStorage.setItem(getHeartbeatStorageKey(), String(Date.now()));
     } catch (e) {}
   }
 
@@ -291,10 +641,39 @@
     if (!s) return null;
     var now = Date.now();
     var canOwn = shouldOwnEngine(now);
+    var t = normalizeTimer(s.timer, s);
+    s.timer = t;
+    var totalSecBefore = getTotalSeconds(s);
+    if (canOwn) syncTotalSeconds(s, now);
+    var totalSecAfter = getTotalSeconds(s);
+
+    var bridgeCompleted = null;
+    if (
+      canOwn &&
+      t.bridge &&
+      Number.isFinite(t.bridge.until) &&
+      now >= t.bridge.until
+    ) {
+      bridgeCompleted = t.bridge.kind;
+      t.bridge = null;
+      applyResume(s, now);
+      writeSyncState(s);
+      return {
+        state: s,
+        advanced: false,
+        leveledUp: false,
+        finished: false,
+        rem: remainingSec(s, Date.now()),
+        now: Date.now(),
+        bridgeCompleted: bridgeCompleted,
+      };
+    }
+
     var res = tickExpire(s, now, canOwn);
     if (res.advanced) {
       writeSyncState(res.state);
-      if (res.leveledUp) playLevelBeep();
+    } else if (canOwn && totalSecAfter !== totalSecBefore) {
+      writeSyncState(res.state);
     }
     var live = res.state;
     var rem = remainingSec(live, now);
@@ -305,21 +684,30 @@
       finished: !!res.finished,
       rem: rem,
       now: now,
+      bridgeCompleted: null,
     };
   }
 
   global.MetisTimer = {
-    STORAGE_KEY: STORAGE_KEY,
+    LEGACY_SYNC_KEY: LEGACY_SYNC_KEY,
+    getSyncStorageKey: getSyncStorageKey,
+    getHeartbeatStorageKey: getHeartbeatStorageKey,
+    setSyncPresetId: setSyncPresetId,
+    getSyncPresetId: getSyncPresetId,
     HEARTBEAT_KEY: HEARTBEAT_KEY,
     HEARTBEAT_MS: HEARTBEAT_MS,
     readSyncState: readSyncState,
     writeSyncState: writeSyncState,
     defaultTimer: defaultTimer,
+    getActivePreset: getActivePreset,
     getActiveLevels: getActiveLevels,
+    isBreakRow: isBreakRow,
     levelDurationSec: levelDurationSec,
     formatMMSS: formatMMSS,
     remainingSec: remainingSec,
-    applyRestart: applyRestart,
+    applyResume: applyResume,
+    applyStartSequence: applyStartSequence,
+    applyLevelRefresh: applyLevelRefresh,
     applyPause: applyPause,
     tickExpire: tickExpire,
     shouldOwnEngine: shouldOwnEngine,
@@ -329,6 +717,7 @@
     subscribeSync: subscribeSync,
     syncLevelField: syncLevelField,
     normalizeTimer: normalizeTimer,
+    getTotalSeconds: getTotalSeconds,
     engineStep: engineStep,
     pickRemoteSlice: pickRemoteSlice,
   };

@@ -1,0 +1,84 @@
+{
+  "metisPresetExport": 1,
+  "exportedAt": "2026-05-19T01:10:09.915Z",
+  "preset": {
+    "name": "프리셋 개별 적용 테스트2",
+    "levels": [
+      {
+        "sb": 100,
+        "bb": 200,
+        "ante": 200,
+        "minutes": 20
+      },
+      {
+        "sb": 100,
+        "bb": 200,
+        "ante": 200,
+        "minutes": 20
+      },
+      {
+        "sb": 100,
+        "bb": 200,
+        "ante": 200,
+        "minutes": 20
+      },
+      {
+        "sb": 100,
+        "bb": 200,
+        "ante": 200,
+        "minutes": 20
+      },
+      {
+        "sb": 100,
+        "bb": 200,
+        "ante": 200,
+        "minutes": 20
+      },
+      {
+        "sb": 100,
+        "bb": 200,
+        "ante": 200,
+        "minutes": 20
+      },
+      {
+        "sb": 100,
+        "bb": 200,
+        "ante": 200,
+        "minutes": 20
+      },
+      {
+        "sb": 100,
+        "bb": 200,
+        "ante": 200,
+        "minutes": 20
+      },
+      {
+        "sb": 100,
+        "bb": 200,
+        "ante": 200,
+        "minutes": 20
+      },
+      {
+        "sb": 100,
+        "bb": 200,
+        "ante": 200,
+        "minutes": 20
+      }
+    ],
+    "tournamentName": "테스트2",
+    "totalPrizeText": "1000000",
+    "tournamentInfo": "테스트2",
+    "prizeText": "",
+    "prizeItems": [
+      {
+        "rank": "1",
+        "amount": 1000000
+      }
+    ],
+    "player": 0,
+    "entry": 0,
+    "entryChips": 0,
+    "regCloseLevel": 0,
+    "regCloseAfterPlayLevel": 3
+  }
+}

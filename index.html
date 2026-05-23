@@ -2,7 +2,8 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
     <title>Metis — 홀덤 타이머 관리</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -13,7 +14,7 @@
         <div class="auth-card">
           <p class="auth-brand">Metis Timer</p>
           <h1 class="auth-title">관리자 인증</h1>
-          <p class="auth-desc">6자리 숫자 비밀번호를 입력하세요.<br />최초 기본값은 000000 입니다.</p>
+          <p class="auth-desc">6자리 숫자 비밀번호를 입력하세요.</p>
           <div class="pin-row" role="group" aria-label="비밀번호 6자리">
             <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="one-time-code" aria-label="1번째 자리" />
             <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="2번째 자리" />
@@ -30,64 +31,100 @@
 
       <!-- 타이머 리모컨 -->
       <section id="screen-remote" class="screen" aria-label="타이머 리모컨">
-        <header class="remote-header">
-          <h2 id="remote-title" class="remote-title">타이머 리모컨</h2>
-          <button type="button" id="btn-logout" class="btn-icon" title="잠금" aria-label="잠금 화면으로">×</button>
-        </header>
-
         <div class="remote-body">
           <div class="timer-banner">
             <span id="timer-status" class="timer-status">대기중</span>
             <span id="timer-clock" class="timer-clock">00:00</span>
           </div>
 
+          <div id="remote-meta" class="remote-meta">
+            <label class="remote-meta-field remote-meta-field--full">
+              <span class="remote-meta-label">대회명</span>
+              <textarea
+                id="input-tournament-name"
+                rows="2"
+                maxlength="120"
+                placeholder="예: 경남미니토너먼트&#10;남포점"
+              ></textarea>
+            </label>
+            <label class="remote-meta-field remote-meta-field--full">
+              <span class="remote-meta-label">대회 정보 (INFO: 일시·장소·비고 등)</span>
+              <textarea id="input-tournament-info" rows="3" maxlength="600" placeholder="타이머 좌측 상단에 표시됩니다."></textarea>
+            </label>
+            <label class="remote-meta-field remote-meta-field--full">
+              <span class="remote-meta-label">등수별 상금 / GTD</span>
+              <button type="button" id="btn-open-prize-modal" class="btn-sm purple">
+                상금 스트럭처 수정
+              </button>
+            </label>
+            <label class="remote-meta-field remote-meta-field--full">
+              <span class="remote-meta-label">총 상금 (TOTAL PRIZE)</span>
+              <input id="input-total-prize" type="text" maxlength="120" placeholder="예: 15,000,000" />
+            </label>
+          </div>
+
           <div class="grid-stats">
             <div class="stat-card">
-              <div class="stat-label">Total Chips</div>
+              <div class="stat-label">TOTAL STACK (자동)</div>
               <div id="val-total-chips" class="stat-value">0</div>
+              <div class="stat-hint">총 인원 × 아래 바인칩</div>
             </div>
             <div class="stat-card">
-              <div class="stat-label">Avg Stack</div>
+              <div class="stat-label">AVG STACK (자동)</div>
               <div id="val-avg-stack" class="stat-value">0</div>
+              <div class="stat-hint">TOTAL ÷ 현재 인원</div>
             </div>
             <div class="stat-card">
-              <div class="stat-label">Player</div>
-              <div id="val-player" class="stat-value">0</div>
+              <div class="stat-label">현재 인원</div>
+              <input
+                id="val-player"
+                type="number"
+                min="0"
+                step="1"
+                class="stat-value stat-value-input"
+                inputmode="numeric"
+                aria-label="현재 인원"
+                value="0"
+              />
               <div class="stat-controls">
                 <button type="button" id="btn-player-minus" class="btn-step" aria-label="플레이어 감소">−</button>
                 <button type="button" id="btn-player-plus" class="btn-step" aria-label="플레이어 증가">+</button>
               </div>
             </div>
             <div class="stat-card">
-              <div class="stat-label">Entry</div>
-              <div id="val-entry" class="stat-value">0</div>
+              <div class="stat-label">총 인원 (Entry)</div>
+              <input
+                id="val-entry"
+                type="number"
+                min="0"
+                step="1"
+                class="stat-value stat-value-input"
+                inputmode="numeric"
+                aria-label="총 인원 Entry"
+                value="0"
+              />
+              <div class="stat-hint">+ 시 현재 인원도 함께 증가</div>
               <div class="stat-controls">
                 <button type="button" id="btn-entry-minus" class="btn-step" aria-label="엔트리 감소">−</button>
                 <button type="button" id="btn-entry-plus" class="btn-step" aria-label="엔트리 증가">+</button>
               </div>
             </div>
             <div class="stat-card">
-              <div class="stat-label">Rebuy</div>
-              <div id="val-rebuy" class="stat-value">0</div>
+              <div class="stat-label">바인 / 엔트리 칩</div>
+              <input
+                id="val-entry-chips-display"
+                type="number"
+                min="0"
+                step="1"
+                class="stat-value stat-value-input"
+                inputmode="numeric"
+                aria-label="바인 엔트리 칩"
+                value="0"
+              />
+              <div class="stat-hint">TOTAL STACK 계산에 사용</div>
               <div class="stat-controls">
-                <button type="button" id="btn-rebuy-minus" class="btn-step" aria-label="리바인 감소">−</button>
-                <button type="button" id="btn-rebuy-plus" class="btn-step" aria-label="리바인 증가">+</button>
-              </div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">Addon</div>
-              <div id="val-addon" class="stat-value">0</div>
-              <div class="stat-controls">
-                <button type="button" id="btn-addon-minus" class="btn-step" aria-label="애드온 감소">−</button>
-                <button type="button" id="btn-addon-plus" class="btn-step" aria-label="애드온 증가">+</button>
-              </div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">Early</div>
-              <div id="val-early" class="stat-value">0</div>
-              <div class="stat-controls">
-                <button type="button" id="btn-early-minus" class="btn-step" aria-label="얼리 감소">−</button>
-                <button type="button" id="btn-early-plus" class="btn-step" aria-label="얼리 증가">+</button>
+                <button type="button" id="btn-entry-chips-minus" class="btn-step" aria-label="바인칩 감소">−</button>
+                <button type="button" id="btn-entry-chips-plus" class="btn-step" aria-label="바인칩 증가">+</button>
               </div>
             </div>
             <div class="stat-card">
@@ -104,6 +141,17 @@
           <div class="preset-bar">
             <select id="preset-select" aria-label="적용할 프리셋"></select>
             <button type="button" id="btn-preset-add" class="btn-sm purple">프리셋 추가</button>
+            <button type="button" id="btn-preset-export" class="btn-sm neutral" title="선택한 프리셋을 JSON 파일로 저장">
+              내보내기
+            </button>
+            <button type="button" id="btn-preset-import" class="btn-sm neutral" title="JSON 파일에서 프리셋 추가">가져오기</button>
+            <input
+              type="file"
+              id="input-preset-import"
+              accept=".json,application/json"
+              hidden
+              aria-hidden="true"
+            />
           </div>
           <div class="preset-table-wrap">
             <table class="preset-table">
@@ -122,22 +170,115 @@
 
         <footer class="remote-footer">
           <div class="remote-footer-row">
-            <button type="button" id="btn-restart" class="btn-timer-action orange">재시작</button>
-            <button type="button" id="btn-pause" class="btn-timer-action gray">정지</button>
+            <button type="button" id="btn-start" class="btn-timer-action green">시작</button>
+            <button type="button" id="btn-pause" class="btn-timer-action gray">일시정지</button>
+            <button type="button" id="btn-refresh" class="btn-timer-action orange">새로고침</button>
+            <button type="button" id="btn-stop" class="btn-timer-action red">종료</button>
           </div>
-          <button type="button" id="btn-open-timer" class="btn-open-timer">타이머 열기</button>
         </footer>
       </section>
     </div>
 
     <!-- 프리셋 편집 모달 -->
     <div id="modal-preset" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <div class="modal" id="modal-preset-panel">
+      <div class="modal modal--wide" id="modal-preset-panel">
         <h3 id="modal-title">프리셋</h3>
         <label for="modal-name">프리셋 이름</label>
         <input id="modal-name" type="text" maxlength="80" />
-        <label for="modal-levels">레벨 JSON (sb, bb, ante, minutes 배열)</label>
-        <textarea id="modal-levels" spellcheck="false"></textarea>
+        <div id="modal-new-preset-meta" class="modal-new-preset-meta is-hidden" aria-hidden="true">
+          <p class="modal-field-hint">
+            새 프리셋 전용입니다. 기존 리모컨 설정을 복사하지 않으며, 여기서 입력한 값이 이 프리셋에만 저장됩니다.
+          </p>
+          <label for="modal-new-tournament-name">대회명</label>
+          <input id="modal-new-tournament-name" type="text" maxlength="120" placeholder="새 대회" />
+          <label for="modal-new-tournament-info">대회 정보 (선택)</label>
+          <textarea
+            id="modal-new-tournament-info"
+            rows="2"
+            maxlength="600"
+            placeholder="일시·장소 등"
+          ></textarea>
+          <div class="modal-new-preset-meta-grid">
+            <label class="modal-new-preset-field">
+              <span>현재 인원</span>
+              <input id="modal-new-player" type="number" min="0" step="1" value="0" inputmode="numeric" />
+            </label>
+            <label class="modal-new-preset-field">
+              <span>총 인원 (Entry)</span>
+              <input id="modal-new-entry" type="number" min="0" step="1" value="0" inputmode="numeric" />
+            </label>
+            <label class="modal-new-preset-field">
+              <span>바인 칩</span>
+              <input id="modal-new-entry-chips" type="number" min="0" step="1" value="0" inputmode="numeric" />
+            </label>
+            <label class="modal-new-preset-field modal-new-preset-field--wide">
+              <span>총 상금 (TOTAL PRIZE)</span>
+              <input id="modal-new-total-prize" type="text" maxlength="120" placeholder="" />
+            </label>
+          </div>
+          <p class="modal-field-hint">
+            등수별 상금은 저장 후 리모컨의 「상금 스트럭처 수정」에서 입력할 수 있습니다.
+          </p>
+        </div>
+        <label for="modal-reg-close-level">레지 마감 (LEVEL N 블라인드 시작 직전까지)</label>
+        <p class="modal-field-hint">
+          숫자 N은 타이머에 표시되는 LEVEL 번호입니다. 레지는 해당 블라인드 레벨이 시작되기 전까지로 맞춰집니다(N번 레벨 구간은 제외).
+        </p>
+        <input
+          id="modal-reg-close-level"
+          type="number"
+          min="1"
+          max="999"
+          step="1"
+          placeholder="비우면 REG CLOSE 미표시"
+        />
+        <label class="modal-levels-label">블라인드 · 브레이크 순서</label>
+        <div class="modal-level-toolbar">
+          <div class="modal-level-toolbar-left">
+            <button type="button" id="modal-add-level" class="btn-modal-add-level">+ 레벨 추가</button>
+            <button type="button" id="modal-add-break" class="btn-modal-add-break">+ 브레이크 추가</button>
+          </div>
+          <div class="modal-level-toolbar-right">
+            <input
+              id="modal-bulk-minutes"
+              type="number"
+              min="1"
+              max="999"
+              step="1"
+              placeholder="분"
+              aria-label="블라인드 분 일괄 적용 값"
+            />
+            <button type="button" id="modal-bulk-apply" class="btn-sm purple">일괄 적용</button>
+          </div>
+        </div>
+        <div class="modal-levels-scroll" role="group" aria-label="레벨 및 브레이크">
+          <!-- 한 테이블로 행(가로줄)이 끊기지 않게 유지, 스크롤은 이 박스에만 -->
+          <table class="preset-levels-table">
+            <colgroup>
+              <col class="pl-col-handle" />
+              <col class="pl-col-stage" />
+              <col class="pl-col-blind" />
+              <col class="pl-col-blind" />
+              <col class="pl-col-blind" />
+              <col class="pl-col-min" />
+              <col class="pl-col-ad" />
+              <col class="pl-col-reorder" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th aria-label="순서 변경"></th>
+                <th class="pl-col-lv">단계</th>
+                <th>스몰 블라인드</th>
+                <th>빅 블라인드</th>
+                <th>앤티</th>
+                <th class="pl-col-min">블라인드(분)</th>
+                <th class="pl-col-ad">브레이크 영상 파일</th>
+                <th class="pl-col-reorder">삭제</th>
+              </tr>
+            </thead>
+            <tbody id="modal-levels-tbody"></tbody>
+          </table>
+        </div>
         <div class="modal-actions">
           <button type="button" id="modal-cancel" class="modal-cancel">취소</button>
           <button type="button" id="modal-save" class="modal-save">저장</button>
@@ -145,7 +286,35 @@
       </div>
     </div>
 
+    <!-- 상금 스트럭처 편집 모달 -->
+    <div id="modal-prize" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-prize-title">
+      <div class="modal" id="modal-prize-panel">
+        <h3 id="modal-prize-title">상금 스트럭처 수정</h3>
+        <div class="modal-prize-table-wrap">
+          <table class="modal-prize-table" aria-label="등수별 상금">
+            <thead>
+              <tr>
+                <th style="width: 44px"></th>
+                <th>등수</th>
+                <th>금액</th>
+                <th style="width: 72px">삭제</th>
+              </tr>
+            </thead>
+            <tbody id="modal-prize-tbody"></tbody>
+          </table>
+        </div>
+        <div class="modal-prize-toolbar">
+          <button type="button" id="modal-prize-add" class="btn-sm neutral">+ 행 추가</button>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="modal-prize-cancel" class="modal-cancel">취소</button>
+          <button type="button" id="modal-prize-save" class="modal-save">저장하기</button>
+        </div>
+      </div>
+    </div>
+
     <script src="timer-core.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

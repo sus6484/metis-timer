@@ -2,114 +2,729 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
     <title>Metis — 타이머</title>
+    <link rel="stylesheet" href="styles.css" />
     <style>
       :root {
+        color-scheme: dark;
         --bg: #000;
-        --pink: #ff2da5;
+        --pink: #ccff00;
         --cyan: #38bdf8;
         --text: #fff;
         --muted: #94a3b8;
+        /* 전체화면·와이드에서 좌우 패널을 화면 끝 쪽으로 활용 */
+        --timer-layout-max: min(2560px, 99vw);
       }
       * {
         box-sizing: border-box;
       }
+      html {
+        overflow-x: hidden;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+      html,
       body {
+        height: 100%;
         margin: 0;
+        max-width: 100%;
+      }
+      body {
         min-height: 100vh;
-        background: var(--bg);
+        min-height: 100dvh;
+        min-height: -webkit-fill-available;
+        background-color: var(--bg);
+        background-image: url("image/background2.png");
+        background-repeat: no-repeat;
+        background-position: center center;
+        background-size: cover;
         color: var(--text);
         font-family: Pretendard, system-ui, sans-serif;
         display: flex;
         flex-direction: column;
         align-items: center;
+        padding: max(12px, env(safe-area-inset-top, 0px)) max(4px, env(safe-area-inset-right, 0px))
+          max(20px, env(safe-area-inset-bottom, 0px)) max(2px, env(safe-area-inset-left, 0px));
+        position: relative;
+        overflow-x: hidden;
+        width: 100%;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.8);
+        pointer-events: none;
+        z-index: 0;
+      }
+      body > * {
+        position: relative;
+        z-index: 1;
+      }
+      .timer-page-header {
+        width: 100%;
+        max-width: min(99vw, var(--timer-layout-max));
+        margin: 0 auto 10px;
+        padding: 0 8px 4px;
+        text-align: center;
+        flex-shrink: 0;
+      }
+      .timer-tournament-title {
+        margin: 0;
+        color: var(--pink);
+        text-shadow: 0 0 8px rgba(204, 255, 0, 0.45), 0 0 20px rgba(204, 255, 0, 0.25);
+        font-size: clamp(1.5rem, 5.2vw, 2.85rem);
+        font-weight: 800;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+        white-space: pre-wrap;
+        text-align: center;
+        word-break: keep-all;
+        overflow-wrap: anywhere;
+      }
+      .timer-header-logo {
+        width: min(120px, 26vw);
+        max-width: 100%;
+        height: auto;
+        display: block;
+        margin: 6px auto 14px;
+        opacity: 0.82;
+      }
+      .outer-layout {
+        flex: 1;
+        display: flex;
+        flex-direction: row;
+        align-items: stretch;
+        justify-content: space-between;
+        width: min(99vw, var(--timer-layout-max));
+        max-width: min(99vw, var(--timer-layout-max));
+        gap: clamp(10px, 2vw, 28px);
+        flex-wrap: wrap;
+        margin: 0 auto;
+        min-height: 0;
+      }
+      .stage-left {
+        flex: 0 1 320px;
+        min-width: 240px;
+        max-width: 380px;
+        padding: 6px clamp(10px, 1.3vw, 16px) 8px clamp(18px, 2.9vw, 34px);
+        border-right: 1px solid rgba(255, 255, 255, 0.12);
+        display: flex;
+        flex-direction: column;
         justify-content: center;
-        padding: 24px 16px 40px;
+        align-self: stretch;
+        text-align: left;
+      }
+      .left-lab {
+        display: block;
+        font-size: 0.72rem;
+        letter-spacing: 0.16em;
+        color: var(--pink);
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+      .total-prize-wrap {
+        margin-top: 6px;
+      }
+      .total-prize-value {
+        margin: 0;
+        color: var(--pink);
+        font-size: clamp(1.1rem, 3.4vw, 1.85rem);
+        font-weight: 800;
+        line-height: 1.2;
+        font-variant-numeric: tabular-nums;
+        text-shadow: 0 0 8px rgba(204, 255, 0, 0.35);
+        word-break: break-word;
+      }
+      .left-lab-margin {
+        margin-top: 18px;
+      }
+      .prize-val {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: none;
+        overflow: hidden;
+        padding-right: 0;
+        font-size: 1rem;
+        line-height: 1.35;
+        color: var(--text);
+      }
+      .info-wrap {
+        margin-bottom: 18px;
+      }
+      .prize-wrap {
+        margin-bottom: 18px;
+      }
+      .prize-item {
+        display: flex;
+        align-items: baseline;
+        justify-content: flex-start;
+        gap: 10px;
+        white-space: normal;
+        word-break: break-word;
+      }
+      .prize-rank {
+        color: #e5e7eb;
+        font-weight: 700;
+        font-size: clamp(0.95rem, 2.1vw, 1.15rem);
+        letter-spacing: 0.02em;
+      }
+      .prize-amount {
+        color: #ffffff;
+        font-weight: 700;
+        font-size: clamp(1rem, 2.3vw, 1.22rem);
+        font-variant-numeric: tabular-nums;
+        margin-left: auto;
+      }
+      .prize-item--top .prize-rank {
+        color: var(--pink);
+        font-size: clamp(1.08rem, 2.7vw, 1.4rem);
+      }
+      .prize-item--top .prize-amount {
+        color: #f5ffd1;
+        font-size: clamp(1.2rem, 3.1vw, 1.75rem);
+        text-shadow: 0 0 8px rgba(204, 255, 0, 0.28);
+      }
+      .tourney-info {
+        margin: 0;
+        font-size: clamp(0.9rem, 2.2vw, 1.1rem);
+        line-height: 1.55;
+        color: var(--muted);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .tap-root {
+        flex: 1 1 0%;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: center;
+        cursor: pointer;
+        border-radius: 12px;
+        outline: none;
+        transition: background 0.15s;
+        padding: 8px 0;
+      }
+      .tap-root:hover {
+        background: rgba(255, 45, 165, 0.04);
+      }
+      .tap-root:focus-visible {
+        box-shadow: 0 0 0 2px var(--pink);
+      }
+      .tap-inner {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: row;
+        align-items: stretch;
+        justify-content: space-between;
+        gap: clamp(12px, 2.5vw, 36px);
+        width: 100%;
+        min-height: 0;
+        flex-wrap: nowrap;
+      }
+      .stage-main {
+        flex: 1 1 0%;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+      .normal-stage-main {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+        text-align: center;
+      }
+      .stage-side {
+        flex: 0 0 290px;
+        min-width: 250px;
+        border-left: 1px solid rgba(255, 255, 255, 0.12);
+        padding-left: clamp(18px, 2.9vw, 34px);
+        padding-right: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 22px;
+        text-align: left;
+      }
+      @media (max-width: 900px) {
+        .tap-inner {
+          flex-wrap: wrap;
+        }
+        .outer-layout {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .stage-left {
+          max-width: none;
+          border-right: none;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+          padding: 0 0 18px 0;
+          justify-content: flex-start;
+          align-self: auto;
+        }
+        .tap-inner {
+          flex-direction: column;
+          align-items: center;
+          justify-content: flex-start;
+        }
+        .stage-side {
+          border-left: none;
+          border-top: 1px solid rgba(255, 255, 255, 0.12);
+          padding-left: 0;
+          padding-top: 20px;
+          width: 100%;
+          max-width: 420px;
+          flex-direction: column;
+          align-items: stretch;
+          gap: 20px;
+        }
+      }
+      @supports not (backdrop-filter: blur(1px)) {
+        .timer-pause-overlay {
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+          background: rgba(50, 0, 0, 0.55);
+        }
+      }
+      .tap-hint {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: min(36rem, 100%);
+        margin-inline: auto;
+        font-size: 0.72rem;
+        color: #64748b;
+        margin-top: 16px;
+        letter-spacing: 0.04em;
+        text-align: center;
       }
       .status-pill {
-        font-size: 0.85rem;
+        width: 100%;
+        margin-inline: 0;
+        text-align: center;
+        font-size: 0.92rem;
         color: var(--muted);
         margin-bottom: 8px;
         letter-spacing: 0.06em;
       }
-      h1 {
-        color: var(--pink);
-        font-size: clamp(1rem, 3vw, 1.35rem);
-        font-weight: 700;
-        text-align: center;
-        margin: 0 0 8px;
-        max-width: 90vw;
-      }
       .level {
+        width: 100%;
+        margin-inline: 0;
+        text-align: center;
         color: var(--pink);
-        font-size: 0.95rem;
+        font-size: clamp(1.45rem, 3.7vw, 2.2rem);
+        font-weight: 800;
         letter-spacing: 0.12em;
-        margin-bottom: 12px;
+        margin-bottom: 20px;
       }
       .clock {
-        font-size: clamp(3rem, 14vw, 5.5rem);
+        font-size: clamp(6.25rem, min(28vw, 26vmin), 15.5rem);
         font-weight: 800;
         font-variant-numeric: tabular-nums;
-        margin-bottom: 20px;
+        margin-bottom: 28px;
         line-height: 1;
+        text-align: center;
       }
       .blinds {
+        width: 100%;
         text-align: center;
-        margin-bottom: 10px;
-        font-size: 1.05rem;
+        margin-bottom: 20px;
+        font-size: clamp(2.1rem, 5.4vw, 3.1rem);
+        font-weight: 700;
+        line-height: 1.35;
       }
       .blinds span.lab {
         color: var(--pink);
-        font-size: 0.75rem;
+        font-size: clamp(1.05rem, 2.2vw, 1.45rem);
         letter-spacing: 0.1em;
         margin-right: 8px;
       }
       .next-level {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: min(52rem, 100%);
+        padding-inline: 8px;
+        margin-inline: auto;
         text-align: center;
-        font-size: 0.9rem;
+        font-size: clamp(1.8rem, 4.6vw, 2.5rem);
+        font-weight: 600;
         color: var(--muted);
-        margin-bottom: 28px;
-        max-width: 520px;
-        line-height: 1.5;
+        margin-top: 12px;
+        line-height: 1.4;
       }
       .next-level strong {
         color: var(--cyan);
       }
-      .stats {
-        color: var(--muted);
-        font-size: 0.875rem;
-        text-align: center;
-        line-height: 1.9;
-        max-width: 560px;
+      .break-top-bar {
+        width: 100%;
+        max-width: var(--timer-layout-max);
+        margin: 0 auto 10px;
+        padding: 12px 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px 24px;
+        flex-wrap: wrap;
+        background: rgba(180, 83, 79, 0.18);
+        border: 1px solid rgba(180, 83, 79, 0.45);
+        border-radius: 12px;
+        flex-shrink: 0;
       }
-      .stats strong {
+      .break-top-bar.is-hidden {
+        display: none;
+      }
+      .break-top-meta {
+        font-size: 0.8rem;
+        letter-spacing: 0.14em;
+        color: #f87171;
+        font-weight: 700;
+      }
+      .break-top-clock {
+        font-size: clamp(2rem, 7vw, 3.5rem);
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
         color: var(--cyan);
+        line-height: 1;
       }
-      .hint {
-        margin-top: 28px;
-        font-size: 0.72rem;
-        color: #64748b;
-        text-align: center;
-        max-width: 400px;
-        line-height: 1.5;
+      .break-video-stage {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: min(52vh, 520px);
+        padding: 8px 4px;
+      }
+      .break-video-stage.is-hidden {
+        display: none;
+      }
+      .break-video-stage video {
+        box-sizing: border-box;
+        width: auto;
+        height: auto;
+        max-width: 100%;
+        min-width: 0;
+        max-height: min(68vh, 720px);
+        object-fit: contain;
+        border-radius: 10px;
+        background: #0a0a0a;
+        box-shadow: 0 8px 40px rgba(0, 0, 0, 0.55);
+      }
+      .normal-stage-main.is-hidden {
+        display: none;
+      }
+      .metric-label {
+        display: block;
+        font-size: 0.75rem;
+        letter-spacing: 0.14em;
+        color: var(--pink);
+        margin-bottom: 6px;
+      }
+      .metric-val {
+        font-size: clamp(2.2rem, 6.5vw, 3.6rem);
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        color: var(--text);
+      }
+      .metric-val--sidebar {
+        font-size: clamp(1.35rem, 4vw, 2.35rem);
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        color: #d4d4d8;
+        letter-spacing: 0.02em;
+      }
+      .metric-val--avgbb {
+        line-height: 1.35;
+        white-space: normal;
+      }
+      .metric-val-bb {
+        color: var(--pink);
+        text-shadow: 0 0 8px rgba(204, 255, 0, 0.28);
+        font-size: 0.88em;
+      }
+      .metric-val--mono {
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      }
+      .metric-val--placeholder {
+        opacity: 0.4;
+      }
+      .metric-label--break {
+        color: #b45353;
+      }
+      .quick-zone {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 92px;
+        z-index: 99999 !important;
+        pointer-events: none;
+      }
+      .quick-panel {
+        position: fixed;
+        left: 50%;
+        bottom: max(8px, env(safe-area-inset-bottom, 0px));
+        transform: translate(-50%, 52%);
+        transition: transform 0.22s ease, opacity 0.22s ease;
+        opacity: 0.56;
+        background: rgba(0, 0, 0, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 12px;
+        padding: 8px 10px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+        max-width: min(97vw, 1120px);
+        width: max-content;
+        z-index: 99999 !important;
+        pointer-events: auto;
+      }
+      .quick-panel.is-visible {
+        transform: translate(-50%, 0);
+        opacity: 1;
+      }
+      .quick-panel-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        padding: 4px 6px;
+      }
+      .quick-panel-label {
+        font-size: 0.68rem;
+        letter-spacing: 0.06em;
+        color: #cbd5e1;
+        margin-right: 2px;
+        white-space: nowrap;
+      }
+      .quick-btn {
+        min-width: 30px;
+        height: 28px;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: #1f2937;
+        color: #f8fafc;
+        font-weight: 700;
+        font-size: 0.92rem;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .quick-btn:hover {
+        filter: brightness(1.1);
+      }
+      .quick-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .quick-panel-group--transport {
+        flex-wrap: nowrap;
+        gap: 6px;
+        padding-left: 8px;
+        padding-right: 8px;
+      }
+      .quick-btn--start {
+        background: #16a34a;
+        min-width: 58px;
+      }
+      /* 관리자 일시정지(.btn-timer-action.gray)와 동일 톤 */
+      .quick-btn--pause {
+        background: #4b4b5a;
+        color: #f0f0f5;
+        border-color: rgba(255, 255, 255, 0.22);
+        min-width: 58px;
+      }
+      .quick-btn--end {
+        background: #dc2626;
+        min-width: 58px;
       }
     </style>
   </head>
   <body>
-    <p class="status-pill" id="el-status">대기중</p>
-    <p class="level" id="el-level">LEVEL —</p>
-    <h1 id="el-title">타이머</h1>
-    <div class="clock" id="el-clock">00:00</div>
-    <div class="blinds" id="el-blinds"></div>
-    <div class="next-level" id="el-next"></div>
-    <div class="stats" id="el-stats"></div>
-    <p class="hint">
-      리모컨의 <strong>재시작</strong>으로 카운트가 시작되고 <strong>정지</strong>로 멈춥니다. 레벨 종료 시 다음 블라인드로
-      자동 전환됩니다.
-    </p>
+    <div id="pause-overlay" class="timer-pause-overlay" aria-hidden="true">
+      <div class="timer-pause-overlay-label" aria-live="polite">Ⅱ PAUSED</div>
+    </div>
+    <div id="break-top-bar" class="break-top-bar is-hidden" aria-live="polite">
+      <span class="break-top-meta">쉬는 시간 · 남은 시간</span>
+      <span id="break-remaining-top" class="break-top-clock">00:00</span>
+    </div>
+    <header class="timer-page-header">
+      <h1 class="timer-tournament-title" id="el-title">토너먼트</h1>
+    </header>
+    <div class="outer-layout">
+      <aside class="stage-left" id="stage-left" aria-label="상금 및 대회 정보">
+        <div class="info-wrap">
+          <span class="left-lab">INFO</span>
+          <p class="tourney-info" id="el-tourney-info">—</p>
+        </div>
+        <div class="prize-wrap">
+          <span class="left-lab">PRIZE POOL</span>
+          <div class="prize-val" id="el-prize">—</div>
+        </div>
+        <div class="total-prize-wrap">
+          <span class="left-lab">TOTAL PRIZE</span>
+          <p class="total-prize-value" id="el-total-prize">—</p>
+        </div>
+      </aside>
 
+      <div
+        id="tap-root"
+        class="tap-root"
+        role="button"
+        tabindex="0"
+        aria-label="클릭하여 일시정지 또는 이어서 시작"
+      >
+        <div class="tap-inner">
+          <div class="stage-main">
+            <div id="break-video-stage" class="break-video-stage is-hidden" aria-hidden="true">
+              <video
+                id="break-video"
+                playsinline
+                controls
+                preload="metadata"
+                autoplay
+                muted
+              ></video>
+            </div>
+            <div id="normal-stage-main" class="normal-stage-main">
+              <img class="timer-header-logo" src="image/logo.png" alt="Metis logo" />
+              <p class="status-pill" id="el-status">대기중</p>
+              <p class="level" id="el-level">LEVEL —</p>
+              <div class="clock" id="el-clock">00:00</div>
+              <div class="blinds" id="el-blinds"></div>
+              <div class="next-level" id="el-next"></div>
+              <p class="tap-hint">클릭 · 스페이스: 일시정지 / 이어서 시작</p>
+            </div>
+          </div>
+          <aside class="stage-side" id="el-side" aria-live="polite" aria-label="토너먼트 통계">
+            <div class="metric">
+              <span class="metric-label">PLAYERS</span>
+              <span class="metric-val metric-val--sidebar" id="el-m-players">0 / 0</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">TOTAL TIME</span>
+              <span class="metric-val metric-val--sidebar metric-val--mono" id="el-m-totaltime">00:00:00</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">REG CLOSE</span>
+              <span class="metric-val metric-val--sidebar metric-val--mono" id="el-m-regclose">—</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">TOTAL STACK</span>
+              <span class="metric-val metric-val--sidebar" id="el-m-total">0</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">AVG STACK</span>
+              <span class="metric-val metric-val--sidebar metric-val--avgbb" id="el-m-avg">0</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label metric-label--break">NEXT BREAK</span>
+              <span
+                class="metric-val metric-val--sidebar metric-val--mono metric-val--placeholder"
+                id="el-m-nextbreak"
+                >—</span>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <div id="quick-zone" class="quick-zone" aria-hidden="true"></div>
+    <div id="quick-panel" class="quick-panel" aria-label="퀵 컨트롤 패널">
+      <div class="quick-panel-group">
+        <span class="quick-panel-label">VOL</span>
+        <button type="button" class="quick-btn" data-quick="vol-minus">−</button>
+        <button type="button" class="quick-btn" data-quick="vol-plus">+</button>
+      </div>
+      <div class="quick-panel-group">
+        <span class="quick-panel-label">ENTRY</span>
+        <button type="button" class="quick-btn" data-quick="entry-minus">−</button>
+        <button type="button" class="quick-btn" data-quick="entry-plus">+</button>
+      </div>
+      <div class="quick-panel-group">
+        <span class="quick-panel-label">PLAYER</span>
+        <button type="button" class="quick-btn" data-quick="player-minus">−</button>
+        <button type="button" class="quick-btn" data-quick="player-plus">+</button>
+      </div>
+      <div class="quick-panel-group">
+        <span class="quick-panel-label">LEVEL</span>
+        <button type="button" class="quick-btn" data-quick="level-minus">−</button>
+        <button type="button" class="quick-btn" data-quick="level-plus">+</button>
+      </div>
+      <div class="quick-panel-group">
+        <span class="quick-panel-label">MIN</span>
+        <button type="button" class="quick-btn" data-quick="min-minus">−</button>
+        <button type="button" class="quick-btn" data-quick="min-plus">+</button>
+      </div>
+      <div class="quick-panel-group">
+        <span class="quick-panel-label">SEC</span>
+        <button type="button" class="quick-btn" data-quick="sec-minus">−</button>
+        <button type="button" class="quick-btn" data-quick="sec-plus">+</button>
+      </div>
+      <div class="quick-panel-group quick-panel-group--transport">
+        <button type="button" class="quick-btn quick-btn--start" data-quick="start">START</button>
+        <button type="button" class="quick-btn quick-btn--pause" data-quick="pause">PAUSE</button>
+        <button type="button" class="quick-btn quick-btn--end" data-quick="end">END</button>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        function resolveFallbackId() {
+          try {
+            var raw = localStorage.getItem("metis_blindPresets");
+            if (raw) {
+              var arr = JSON.parse(raw);
+              if (Array.isArray(arr) && arr.length) {
+                var aid = localStorage.getItem("metis_activePresetId");
+                if (
+                  aid &&
+                  arr.some(function (p) {
+                    return p && p.id === aid;
+                  })
+                ) {
+                  return aid;
+                }
+                return arr[0].id;
+              }
+            }
+          } catch (e) {}
+          return "preset_default";
+        }
+        var params = new URLSearchParams(window.location.search);
+        var id = params.get("id");
+        if (id) {
+          try {
+            var raw2 = localStorage.getItem("metis_blindPresets");
+            if (raw2) {
+              var arr2 = JSON.parse(raw2);
+              var known =
+                Array.isArray(arr2) &&
+                arr2.some(function (p) {
+                  return p && p.id === id;
+                });
+              if (!known) id = null;
+            }
+          } catch (e2) {
+            id = null;
+          }
+        }
+        if (!id) id = resolveFallbackId();
+        window.__METIS_TIMER_PRESET_ID = id;
+      })();
+    </script>
     <script src="timer-core.js"></script>
+    <script src="metis-audio.js"></script>
     <script>
       (function () {
         window.__METIS_IS_TIMER_PAGE = true;
@@ -118,67 +733,645 @@
           return document.getElementById(id);
         }
 
+        /** 단일 타이머 루프에서 동일 값이면 DOM 스킵 (불필요 리페인트 방지) */
+        var lastUi = {};
+        var lastPausedOverlay = null;
+        var lastHeartbeatAt = 0;
+        /** 엔진·오디오·화면을 한 루프에서 처리 (남은 시간·TOTAL·REG·NEXT BREAK 동시 갱신) */
+        var MAIN_TICK_MS = 200;
+
+        function textIf(id, text) {
+          var v = String(text);
+          if (lastUi[id] === v) return;
+          lastUi[id] = v;
+          var el = $(id);
+          if (el) el.textContent = v;
+        }
+
+        function htmlIf(id, html) {
+          var v = String(html);
+          if (lastUi[id] === v) return;
+          lastUi[id] = v;
+          var el = $(id);
+          if (el) el.innerHTML = v;
+        }
+
+        function escapeHtml(str) {
+          return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+        }
+
+        function formatPrizeAmount(n) {
+          var value = Math.max(0, Math.floor(Number(n) || 0));
+          return value.toLocaleString("ko-KR");
+        }
+
+        function normalizePrizeItems(s) {
+          if (!s || !Array.isArray(s.prizeItems)) return [];
+          return s.prizeItems
+            .map(function (item) {
+              if (!item || typeof item !== "object") return null;
+              var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
+              var amount = Math.max(0, Math.floor(Number(item.amount) || 0));
+              if (!rank || !amount) return null;
+              return { rank: rank, amount: amount };
+            })
+            .filter(Boolean);
+        }
+
+        function displayPrizeBlockHtml(s) {
+          var items = normalizePrizeItems(s);
+          if (items.length) {
+            return items
+              .map(function (item, idx) {
+                var topClass = idx < 3 ? " prize-item--top" : "";
+                return (
+                  '<div class="prize-item' +
+                  topClass +
+                  '">' +
+                  '<span class="prize-rank">' +
+                  escapeHtml(item.rank) +
+                  "</span>" +
+                  '<span class="prize-amount">' +
+                  formatPrizeAmount(item.amount) +
+                  "원</span>" +
+                  "</div>"
+                );
+              })
+              .join("");
+          }
+          var raw =
+            s.prizeText != null && String(s.prizeText).length
+              ? String(s.prizeText).trim()
+              : "";
+          if (raw) return escapeHtml(raw).replace(/\n/g, "<br />");
+          if (s.guaranteedPrize != null) {
+            var n = Math.floor(Number(s.guaranteedPrize) || 0);
+            if (n > 0) return formatPrizeAmount(n) + " 원";
+          }
+          return "—";
+        }
+
+        function displayTotalPrize(s) {
+          var raw =
+            s.totalPrizeText != null && String(s.totalPrizeText).length
+              ? String(s.totalPrizeText).trim()
+              : "";
+          if (!raw) return "—";
+          if (/^\d+$/.test(raw)) return Number(raw).toLocaleString("ko-KR");
+          if (/^\d[\d,\s]*$/.test(raw)) {
+            var n = Number(raw.replace(/[,\s]/g, ""));
+            if (Number.isFinite(n)) return Math.floor(n).toLocaleString("ko-KR");
+          }
+          return raw;
+        }
+
+        /** 브레이크 타임 랜덤 영상 풀 — ./video/ 상대 경로, ended 시 다음 랜덤으로 무한 반복 */
+        var BREAK_VIDEO_POOL = [
+          "./video/0103.mp4",
+          "./video/0105.mp4",
+          "./video/0121.mp4",
+          "./video/0207.mp4",
+          "./video/0318.mp4",
+          "./video/02232.mp4",
+        ];
+
+        var lastPlayedBreakVideo = null;
+        var breakVideoSessionActive = false;
+        var wasBreakUiActive = false;
+        var breakLastTimerRun = false;
+
+        function pickRandomBreakVideo(excludeSrc) {
+          var ex = excludeSrc ? String(excludeSrc) : "";
+          var candidates = BREAK_VIDEO_POOL.filter(function (p) {
+            return p !== ex;
+          });
+          if (candidates.length === 0) candidates = BREAK_VIDEO_POOL.slice();
+          return candidates[Math.floor(Math.random() * candidates.length)];
+        }
+
+        function onBreakVideoEnded() {
+          if (!breakVideoSessionActive) return;
+          var vid = $("break-video");
+          if (!vid) return;
+          var s = MetisTimer.readSyncState();
+          if (!s || !s.timer) return;
+          var tn = MetisTimer.normalizeTimer(s.timer, s);
+          var levels = MetisTimer.getActiveLevels(s);
+          var row = levels && levels[tn.levelIndex];
+          if (
+            !tn.isRunning ||
+            tn.bridge ||
+            !row ||
+            !MetisTimer.isBreakRow(row)
+          ) {
+            return;
+          }
+          var exclude = (vid.dataset.metisSrc && String(vid.dataset.metisSrc)) || "";
+          var next = pickRandomBreakVideo(exclude);
+          lastPlayedBreakVideo = next;
+          vid.dataset.metisSrc = next;
+          vid.src = next;
+          vid.load();
+          var p = vid.play();
+          if (p && typeof p.then === "function") p.catch(function () {});
+        }
+
+        function syncBreakUi(onBreak, breakRow, rem, timerRunning) {
+          var topBar = $("break-top-bar");
+          var vidStage = $("break-video-stage");
+          var norm = $("normal-stage-main");
+          var vid = $("break-video");
+          if (!topBar || !vidStage || !norm || !vid) return;
+          if (onBreak && breakRow) {
+            topBar.classList.remove("is-hidden");
+            vidStage.classList.remove("is-hidden");
+            vidStage.setAttribute("aria-hidden", "false");
+            norm.classList.add("is-hidden");
+            textIf("break-remaining-top", MetisTimer.formatMMSS(rem));
+
+            if (!wasBreakUiActive) {
+              breakVideoSessionActive = true;
+              var src = pickRandomBreakVideo(lastPlayedBreakVideo);
+              lastPlayedBreakVideo = src;
+              vid.dataset.metisSrc = src;
+              vid.src = src;
+              vid.load();
+              if (!vid.dataset.metisBreakEndedBound) {
+                vid.dataset.metisBreakEndedBound = "1";
+                vid.addEventListener("ended", onBreakVideoEnded);
+              }
+            }
+
+            if (timerRunning) {
+              if (!wasBreakUiActive || !breakLastTimerRun) {
+                var p = vid.play();
+                if (p && typeof p.then === "function") p.catch(function () {});
+              }
+            } else {
+              try {
+                vid.pause();
+              } catch (e2) {}
+            }
+            breakLastTimerRun = !!timerRunning;
+            wasBreakUiActive = true;
+          } else {
+            breakVideoSessionActive = false;
+            wasBreakUiActive = false;
+            breakLastTimerRun = false;
+            topBar.classList.add("is-hidden");
+            vidStage.classList.add("is-hidden");
+            vidStage.setAttribute("aria-hidden", "true");
+            norm.classList.remove("is-hidden");
+            try {
+              vid.pause();
+              vid.removeAttribute("src");
+              vid.load();
+            } catch (e1) {}
+            vid.dataset.metisSrc = "";
+          }
+        }
+
+        function playLevelsCountUpTo(levels, idxInclusive) {
+          var n = 0;
+          for (var j = 0; j <= idxInclusive; j++) {
+            if (levels[j] && !MetisTimer.isBreakRow(levels[j])) n++;
+          }
+          return n;
+        }
+
+        function formatCountdownHMS(endMs, now) {
+          if (endMs == null || !Number.isFinite(Number(endMs))) return "—";
+          var sec = Math.max(0, Math.floor((Number(endMs) - now) / 1000));
+          var h = Math.floor(sec / 3600);
+          var m = Math.floor((sec % 3600) / 60);
+          var secR = sec % 60;
+          function p2(n) {
+            return String(n).padStart(2, "0");
+          }
+          var hs = h < 100 ? p2(h) : String(h);
+          return hs + ":" + p2(m) + ":" + p2(secR);
+        }
+
+        /** 다음 브레이크 행까지: 현재 구간 남은 시간 + 중간 전체 구간(레벨·브레이크) 풀타임 합 */
+        function secondsUntilNextBreakRow(levels, levelIndex, remCurrentSec) {
+          if (!levels || !levels.length) return null;
+          var n = levels.length;
+          var i = Math.max(0, Math.min(Math.floor(Number(levelIndex)) || 0, n - 1));
+          var b = -1;
+          for (var j = i + 1; j < n; j++) {
+            if (MetisTimer.isBreakRow(levels[j])) {
+              b = j;
+              break;
+            }
+          }
+          if (b < 0) return null;
+          var total = Math.max(0, Math.floor(Number(remCurrentSec) || 0));
+          for (var k = i + 1; k < b; k++) {
+            total += MetisTimer.levelDurationSec(levels[k]);
+          }
+          return total;
+        }
+
+        function formatDurationHMS(totalSec) {
+          var sec = Math.max(0, Math.floor(Number(totalSec) || 0));
+          var h = Math.floor(sec / 3600);
+          var m = Math.floor((sec % 3600) / 60);
+          var secR = sec % 60;
+          function p2(x) {
+            return String(x).padStart(2, "0");
+          }
+          var hs = h < 100 ? p2(h) : String(h);
+          return hs + ":" + p2(m) + ":" + p2(secR);
+        }
+
+        function formatAvgBbText(avgStack, levelRow) {
+          var avgNum = Math.max(0, Math.floor(Number(avgStack) || 0));
+          var avgText = avgNum.toLocaleString("ko-KR");
+          var bb = levelRow ? Math.floor(Number(levelRow.bb) || 0) : 0;
+          if (!bb) {
+            return avgText + ' <span class="metric-val-bb">(— BB)</span>';
+          }
+          var bbRatio = Math.round((avgNum / bb) * 10) / 10;
+          return (
+            avgText +
+            ' <span class="metric-val-bb">(' +
+            bbRatio.toFixed(1) +
+            " BB)</span>"
+          );
+        }
+
+        /** 진행 중 레벨·브레이크 모두 누적. bridge(대기 타이머·시작 준비)·일시정지(isRunning false)는 제외 */
+        function shouldCountTotalTime(s, tn, levels, currentRow) {
+          if (!s || !tn || !tn.isRunning || tn.bridge) return false;
+          if (!levels || !levels.length || !currentRow) return false;
+          return true;
+        }
+
+        function updateTotalTime(step, tn, levels, currentRow) {
+          var now = typeof step.now === "number" ? step.now : Date.now();
+          if (totalLastNow == null) totalLastNow = now;
+
+          var isResetState =
+            (step.state.timerStatus || "") === "대기중" &&
+            !tn.isRunning &&
+            !tn.bridge &&
+            Number(step.state.totalSeconds || 0) === 0;
+          if (isResetState) {
+            totalSeconds = 0;
+            totalMsCarry = 0;
+            totalLastNow = now;
+            return;
+          }
+
+          if (shouldCountTotalTime(step.state, tn, levels, currentRow)) {
+            var delta = Math.max(0, now - totalLastNow);
+            totalMsCarry += delta;
+            if (totalMsCarry >= 1000) {
+              var gain = Math.floor(totalMsCarry / 1000);
+              totalSeconds += gain;
+              totalMsCarry -= gain * 1000;
+            }
+          } else {
+            totalMsCarry = 0;
+          }
+          totalLastNow = now;
+        }
+
+        function getActivePresetFromState(s) {
+          if (!s || !s.presets || !s.activePresetId) return null;
+          for (var i = 0; i < s.presets.length; i++) {
+            if (s.presets[i].id === s.activePresetId) return s.presets[i];
+          }
+          return null;
+        }
+
+        /** 플레이 레벨 번호(브레이크 제외 N번째)에 해당하는 스케줄 행 인덱스 */
+        function findNthPlayLevelRowIndex(levels, playLevelN) {
+          if (!levels || playLevelN < 1) return null;
+          var seen = 0;
+          for (var i = 0; i < levels.length; i++) {
+            if (!MetisTimer.isBreakRow(levels[i])) {
+              seen++;
+              if (seen === playLevelN) return i;
+            }
+          }
+          return null;
+        }
+
+        /** 스케줄 행 targetIdx 구간이 끝날 때까지 남은 시간(초). 이미 지나면 0 */
+        function secondsUntilScheduleRowEnd(levels, scheduleIndex, remSec, targetIdx) {
+          if (targetIdx == null || targetIdx < 0) return 0;
+          var n = levels.length;
+          var i = Math.max(0, Math.min(Math.floor(Number(scheduleIndex)) || 0, n - 1));
+          var rem = Math.max(0, Math.floor(Number(remSec) || 0));
+          if (i > targetIdx) return 0;
+          if (i === targetIdx) return rem;
+          var total = rem;
+          for (var k = i + 1; k <= targetIdx; k++) {
+            total += MetisTimer.levelDurationSec(levels[k]);
+          }
+          return total;
+        }
+
+        /**
+         * 레지 마감 N = LEVEL N 블라인드가 시작되기 직전 =
+         * 그 직전 스케줄 행(레벨 또는 브레이크)이 끝날 때까지.
+         */
+        function secondsUntilRegCloseBeforeNthPlayLevel(
+          levels,
+          scheduleIndex,
+          remSec,
+          closeAfterPlayLevel
+        ) {
+          if (closeAfterPlayLevel == null || closeAfterPlayLevel < 1) return null;
+          var startIdx = findNthPlayLevelRowIndex(levels, closeAfterPlayLevel);
+          if (startIdx == null) return null;
+          var deadlineIdx = startIdx - 1;
+          return secondsUntilScheduleRowEnd(levels, scheduleIndex, remSec, deadlineIdx);
+        }
+
+        function applyRegCloseDisplay(el, s, levels, idxSchedule, rem, now) {
+          if (!el) return;
+          var cacheId = el.id || "el-m-regclose";
+          var preset = getActivePresetFromState(s);
+          var pl =
+            preset && preset.regCloseAfterPlayLevel != null
+              ? Math.floor(Number(preset.regCloseAfterPlayLevel))
+              : 0;
+          var nextText = "—";
+          var placeholder = true;
+          if (pl >= 1 && levels && levels.length) {
+            var sec = secondsUntilRegCloseBeforeNthPlayLevel(levels, idxSchedule, rem, pl);
+            if (sec == null) {
+              nextText = "—";
+              placeholder = true;
+            } else {
+              nextText = formatDurationHMS(sec);
+              placeholder = sec <= 0;
+            }
+          }
+          if (lastUi[cacheId] === nextText && lastUi[cacheId + ":ph"] === placeholder) return;
+          lastUi[cacheId] = nextText;
+          lastUi[cacheId + ":ph"] = placeholder;
+          el.textContent = nextText;
+          el.classList.toggle("metric-val--placeholder", placeholder);
+        }
+
+        var lastSeenUpdated = 0;
+        var prevBridgeSecExact = null;
+        var prevLevelSecExact = null;
+        var totalSeconds = 0;
+        var totalMsCarry = 0;
+        var totalLastNow = null;
+        var transitionVoiceDone = false;
+        var transitionTickMarks = {};
+        var bridgeTickMarks = {};
+        var audioUnlockBound = false;
+
+        function resetTransitionCues() {
+          transitionVoiceDone = false;
+          transitionTickMarks = {};
+        }
+
+        function crossedThreshold(prevSec, curSec, threshold) {
+          if (curSec == null) return false;
+          if (prevSec == null) return curSec <= threshold;
+          return prevSec > threshold && curSec <= threshold;
+        }
+
+        function runBridgeTicks(step, prevBridgeSec, curBridgeSec) {
+          var br = step.state.timer && step.state.timer.bridge;
+          if (!br || typeof MetisAudio === "undefined") return;
+          if (!bridgeTickMarks["s-5"] && crossedThreshold(prevBridgeSec, curBridgeSec, 5)) {
+            bridgeTickMarks["s-5"] = true;
+            MetisAudio.ensureCtx();
+            MetisAudio.speakGameStart();
+          }
+          for (var sec = 3; sec >= 1; sec--) {
+            var bk = "b-" + sec;
+            if (!bridgeTickMarks[bk] && crossedThreshold(prevBridgeSec, curBridgeSec, sec)) {
+              bridgeTickMarks[bk] = true;
+              MetisAudio.ensureCtx();
+              MetisAudio.playTick();
+            }
+          }
+        }
+
+        function runBlindsUpSequence(step, prevLevelSec, curLevelSec) {
+          var s = step.state;
+          var t = MetisTimer.normalizeTimer(s.timer || {}, s);
+          if (t.bridge || !t.isRunning || typeof MetisAudio === "undefined")
+            return;
+          var levels = MetisTimer.getActiveLevels(s);
+          if (!levels) return;
+          var idx = t.levelIndex;
+          var L = levels[idx];
+          var NL = levels[idx + 1];
+          if (!L || MetisTimer.isBreakRow(L)) return;
+          if (!NL) return;
+          var toBreak = MetisTimer.isBreakRow(NL);
+          var voiceThreshold = toBreak ? 5 : 6;
+          var voiceKey = "v-" + idx + "-" + (toBreak ? "break" : "level");
+
+          if (!transitionTickMarks[voiceKey] && crossedThreshold(prevLevelSec, curLevelSec, voiceThreshold)) {
+            transitionTickMarks[voiceKey] = true;
+            MetisAudio.ensureCtx();
+            if (toBreak) MetisAudio.speakBreakTime();
+            else MetisAudio.speakNextLevelBlindsUp();
+          }
+
+          for (var sec = 3; sec >= 1; sec--) {
+            var key = (toBreak ? "br-" : "lv-") + idx + "-" + sec;
+            if (!transitionTickMarks[key] && crossedThreshold(prevLevelSec, curLevelSec, sec)) {
+              transitionTickMarks[key] = true;
+              MetisAudio.ensureCtx();
+              MetisAudio.playTick();
+            }
+          }
+        }
+
         function renderView(step) {
           var s = step.state;
           var rem = step.rem;
-          $("el-clock").textContent = MetisTimer.formatMMSS(rem);
-          $("el-title").textContent = s.tournamentName || "토너먼트";
-          $("el-level").textContent = "LEVEL " + (s.level || 1);
-          $("el-status").textContent = s.timerStatus || "대기중";
+          var tNow = typeof step.now === "number" ? step.now : Date.now();
+
+          textIf("el-clock", MetisTimer.formatMMSS(rem));
+          textIf("el-title", s.tournamentName || "토너먼트");
+          textIf("el-status", s.timerStatus || "대기중");
+          var paused = (s.timerStatus || "") === "일시정지";
+          var ov = $("pause-overlay");
+          if (ov && lastPausedOverlay !== paused) {
+            lastPausedOverlay = paused;
+            ov.classList.toggle("is-visible", paused);
+            ov.setAttribute("aria-hidden", paused ? "false" : "true");
+          }
+
+          htmlIf("el-prize", displayPrizeBlockHtml(s));
+          textIf("el-total-prize", displayTotalPrize(s));
+          var info = (s.tournamentInfo && String(s.tournamentInfo).trim()) || "";
+          textIf("el-tourney-info", info ? info : "—");
 
           var levels = MetisTimer.getActiveLevels(s);
-          var li = Math.max(0, (parseInt(s.level, 10) || 1) - 1);
+          var tn = MetisTimer.normalizeTimer(s.timer || {}, s);
+          var maxLi = levels && levels.length ? levels.length - 1 : 0;
+          var li = Math.max(0, Math.min(tn.levelIndex, maxLi));
           var L = levels && levels[li];
           var NL = levels && levels[li + 1];
 
           if (L) {
-            $("el-blinds").innerHTML =
-              '<span class="lab">BLINDS</span> ' +
-              L.sb +
-              " / " +
-              L.bb +
-              ' &nbsp; <span class="lab">ANTE</span> ' +
-              (L.ante != null ? L.ante : 0);
+            if (MetisTimer.isBreakRow(L)) {
+              textIf("el-level", "BREAK TIME");
+              htmlIf("el-blinds", "");
+            } else {
+              textIf("el-level", "LEVEL " + playLevelsCountUpTo(levels, li));
+              htmlIf(
+                "el-blinds",
+                '<span class="lab">BLINDS</span> ' +
+                  L.sb +
+                  " / " +
+                  L.bb +
+                  ' &nbsp; <span class="lab">ANTE</span> ' +
+                  (L.ante != null ? L.ante : 0)
+              );
+            }
           } else {
-            $("el-blinds").textContent = "프리셋을 선택해 주세요.";
+            textIf("el-level", "LEVEL —");
+            textIf("el-blinds", "프리셋을 선택해 주세요.");
           }
 
           if (NL) {
-            $("el-next").innerHTML =
-              "<strong>NEXT LEVEL " +
-              (li + 2) +
-              "</strong> — " +
-              NL.sb +
-              "/" +
-              NL.bb +
-              " (" +
-              (NL.ante != null ? NL.ante : 0) +
-              ")";
+            if (MetisTimer.isBreakRow(NL)) {
+              var bm = Number(NL.minutes);
+              if (!Number.isFinite(bm)) bm = 0;
+              htmlIf("el-next", "<strong>NEXT BREAK</strong> — 약 " + bm + "분");
+            } else {
+              var nextOrd = playLevelsCountUpTo(levels, li + 1);
+              htmlIf(
+                "el-next",
+                "<strong>NEXT LEVEL " +
+                  nextOrd +
+                  "</strong> — " +
+                  NL.sb +
+                  "/" +
+                  NL.bb +
+                  " (" +
+                  (NL.ante != null ? NL.ante : 0) +
+                  ")"
+              );
+            }
           } else if (L && levels && li + 1 >= levels.length) {
-            $("el-next").innerHTML = "<strong>마지막 레벨</strong>";
+            htmlIf("el-next", "<strong>마지막 단계</strong>");
           } else {
-            $("el-next").textContent = "";
+            htmlIf("el-next", "");
           }
 
           var pl = s.player != null ? s.player : 0;
           var en = s.entry != null ? s.entry : 0;
-          var rb = s.rebuy != null ? s.rebuy : 0;
-          var ad = s.addon != null ? s.addon : 0;
-          $("el-stats").innerHTML =
-            "<strong>PLAYERS</strong> " +
-            pl +
-            " &nbsp; <strong>ENTRY</strong> " +
-            en +
-            " &nbsp; <strong>RE-BUY</strong> " +
-            rb +
-            " &nbsp; <strong>ADDON</strong> " +
-            ad;
+          textIf("el-m-players", pl + " / " + en);
+          updateTotalTime(step, tn, levels, L);
+          textIf("el-m-totaltime", formatDurationHMS(totalSeconds));
+          var idxSchedule = tn.levelIndex;
+          applyRegCloseDisplay($("el-m-regclose"), s, levels, idxSchedule, rem, tNow);
+          var totalStack =
+            Math.max(0, Math.floor(Number(en) || 0)) *
+            Math.max(0, Math.floor(Number(s.entryChips) || 0));
+          textIf("el-m-total", totalStack.toLocaleString("ko-KR"));
+          var avgStack = pl > 0 ? Math.floor(totalStack / pl) : 0;
+          htmlIf("el-m-avg", formatAvgBbText(avgStack, L));
+
+          var secToBreak = secondsUntilNextBreakRow(levels, idxSchedule, rem);
+          var elNb = $("el-m-nextbreak");
+          if (elNb) {
+            var nbKey = "el-m-nextbreak";
+            var nbText;
+            var nbPh;
+            if (secToBreak == null) {
+              nbText = "—";
+              nbPh = true;
+            } else {
+              nbText = formatDurationHMS(secToBreak);
+              nbPh = false;
+            }
+            if (lastUi[nbKey] !== nbText || lastUi[nbKey + ":ph"] !== nbPh) {
+              lastUi[nbKey] = nbText;
+              lastUi[nbKey + ":ph"] = nbPh;
+              elNb.textContent = nbText;
+              elNb.classList.toggle("metric-val--placeholder", nbPh);
+            }
+          }
+
+          lastSeenUpdated = s.updatedAt || lastSeenUpdated;
+
+          var tmr = s.timer && s.timer.isRunning;
+          syncBreakUi(
+            !!(L && MetisTimer.isBreakRow(L)),
+            L && MetisTimer.isBreakRow(L) ? L : null,
+            rem,
+            !!tmr
+          );
         }
 
         function tick() {
-          MetisTimer.touchTimerWindowHeartbeat();
+          var hbNow = Date.now();
+          if (hbNow - lastHeartbeatAt >= MetisTimer.HEARTBEAT_MS) {
+            MetisTimer.touchTimerWindowHeartbeat();
+            lastHeartbeatAt = hbNow;
+          }
+          var prevBridge = prevBridgeSecExact;
+          var prevLevel = prevLevelSecExact;
           var step = MetisTimer.engineStep();
-          if (step) renderView(step);
+          if (!step) return;
+          var nowMs = typeof step.now === "number" ? step.now : Date.now();
+          var tNow = step.state.timer ? step.state.timer : null;
+          var curBridgeSec =
+            tNow && tNow.bridge && Number.isFinite(Number(tNow.bridge.until))
+              ? (Number(tNow.bridge.until) - nowMs) / 1000
+              : null;
+          var curLevelSec =
+            tNow &&
+            tNow.isRunning &&
+            tNow.endAt != null &&
+            Number.isFinite(Number(tNow.endAt))
+              ? (Number(tNow.endAt) - nowMs) / 1000
+              : null;
+
+          var brActive = !!(step.state.timer && step.state.timer.bridge);
+          if (!brActive) {
+            bridgeTickMarks = {};
+            prevBridgeSecExact = null;
+          }
+
+          if (step.bridgeCompleted && typeof MetisAudio !== "undefined") {
+            bridgeTickMarks = {};
+            MetisAudio.ensureCtx();
+            MetisAudio.playDoorong();
+          }
+
+          if (step.leveledUp) {
+            resetTransitionCues();
+            if (typeof MetisAudio !== "undefined") {
+              var lvAfter = MetisTimer.getActiveLevels(step.state);
+              var tnAfter = MetisTimer.normalizeTimer(step.state.timer || {}, step.state);
+              var curAfter = lvAfter && lvAfter[tnAfter.levelIndex];
+              if (curAfter && !MetisTimer.isBreakRow(curAfter)) {
+                MetisAudio.ensureCtx();
+                MetisAudio.playDoorong();
+              }
+            }
+            prevLevelSecExact = null;
+          }
+
+          runBridgeTicks(step, prevBridge, curBridgeSec);
+          runBlindsUpSequence(step, prevLevel, curLevelSec);
+
+          prevBridgeSecExact = curBridgeSec;
+          prevLevelSecExact = curLevelSec;
+          renderView(step);
         }
 
         function refreshFromBroadcast() {
@@ -189,11 +1382,266 @@
           renderView({ state: s, rem: rem, now: now });
         }
 
-        setInterval(function () {
-          MetisTimer.touchTimerWindowHeartbeat();
-        }, MetisTimer.HEARTBEAT_MS);
+        function togglePauseResume() {
+          var s = MetisTimer.readSyncState();
+          if (!s) return;
+          var t = MetisTimer.normalizeTimer(s.timer, s);
+          if (t.isRunning || t.bridge) {
+            MetisTimer.applyPause(s, Date.now());
+          } else {
+            try {
+              var ctx = new (window.AudioContext || window.webkitAudioContext)();
+              ctx.resume().catch(function () {});
+            } catch (e) {}
+            if (s.pendingBridge) {
+              MetisTimer.applyStartSequence(s, Date.now());
+            } else if (s.timerStatus === "일시정지") {
+              MetisTimer.applyResume(s, Date.now());
+            } else {
+              MetisTimer.applyStartSequence(s, Date.now());
+            }
+          }
+          MetisTimer.writeSyncState(s);
+          tick();
+        }
 
-        setInterval(tick, 200);
+        var tapRoot = $("tap-root");
+        var quickPanel = $("quick-panel");
+        var quickHoverBottom = false;
+        var quickHoverPanel = false;
+        var QUICK_VOL_KEY = "metis_quick_master_volume";
+
+        function refreshQuickPanelVisibility() {
+          if (!quickPanel) return;
+          quickPanel.classList.toggle("is-visible", quickHoverBottom || quickHoverPanel);
+        }
+
+        function setQuickMasterVolume(v) {
+          var val = Math.max(0, Math.min(1, Number(v) || 0));
+          if (typeof MetisAudio !== "undefined" && MetisAudio.setMasterVolume) {
+            MetisAudio.setMasterVolume(val);
+          }
+          try {
+            localStorage.setItem(QUICK_VOL_KEY, String(val));
+          } catch (e) {}
+          var bv = $("break-video");
+          if (bv) bv.volume = Math.max(0, Math.min(1, 0.55 * val));
+        }
+
+        function getQuickMasterVolume() {
+          if (typeof MetisAudio !== "undefined" && MetisAudio.getMasterVolume) {
+            return MetisAudio.getMasterVolume();
+          }
+          return 1;
+        }
+
+        function loadQuickVolume() {
+          var init = 1;
+          try {
+            var raw = Number(localStorage.getItem(QUICK_VOL_KEY));
+            if (Number.isFinite(raw)) init = raw;
+          } catch (e) {}
+          setQuickMasterVolume(init);
+        }
+
+        function quickFeedback() {
+          if (navigator.vibrate) navigator.vibrate(10);
+        }
+
+        function mutateSync(mutator) {
+          var s = MetisTimer.readSyncState();
+          if (!s) return;
+          mutator(s, Date.now());
+          MetisTimer.writeSyncState(s);
+          refreshFromBroadcast();
+        }
+
+        function adjustCurrentRemaining(deltaSec) {
+          mutateSync(function (s, now) {
+            var t = MetisTimer.normalizeTimer(s.timer || {}, s);
+            s.timer = t;
+            if (t.bridge && Number.isFinite(Number(t.bridge.until))) {
+              var curBridge = Math.max(0, Math.ceil((t.bridge.until - now) / 1000));
+              var nextBridge = Math.max(0, curBridge + deltaSec);
+              t.bridge.until = now + nextBridge * 1000;
+              s.displayTime = MetisTimer.formatMMSS(nextBridge);
+              return;
+            }
+            if (t.isRunning && t.endAt != null) {
+              var cur = Math.max(0, Math.ceil((t.endAt - now) / 1000));
+              var next = Math.max(0, cur + deltaSec);
+              t.endAt = now + next * 1000;
+              t.pausedRemainingSec = next;
+              s.displayTime = MetisTimer.formatMMSS(next);
+            } else {
+              var paused = Math.max(0, Math.floor(Number(t.pausedRemainingSec) || 0));
+              var nextPaused = Math.max(0, paused + deltaSec);
+              t.pausedRemainingSec = nextPaused;
+              s.displayTime = MetisTimer.formatMMSS(nextPaused);
+            }
+          });
+        }
+
+        function adjustLevel(delta) {
+          mutateSync(function (s, now) {
+            var levels = MetisTimer.getActiveLevels(s);
+            if (!levels || !levels.length) return;
+            var t = MetisTimer.normalizeTimer(s.timer || {}, s);
+            s.timer = t;
+            var nextIdx = Math.max(0, Math.min(levels.length - 1, t.levelIndex + delta));
+            t.levelIndex = nextIdx;
+            var dur = MetisTimer.levelDurationSec(levels[nextIdx]);
+            if (t.isRunning) {
+              t.endAt = now + dur * 1000;
+              t.pausedRemainingSec = dur;
+            } else {
+              t.endAt = null;
+              t.pausedRemainingSec = dur;
+            }
+            t.bridge = null;
+            s.pendingBridge = null;
+            MetisTimer.syncLevelField(s);
+            s.displayTime = MetisTimer.formatMMSS(dur);
+          });
+        }
+
+        function quickStart() {
+          mutateSync(function (s, now) {
+            var t = MetisTimer.normalizeTimer(s.timer || {}, s);
+            s.timer = t;
+            if (s.pendingBridge) {
+              MetisTimer.applyStartSequence(s, now);
+            } else if (s.timerStatus === "일시정지") {
+              MetisTimer.applyResume(s, now);
+            } else {
+              MetisTimer.applyStartSequence(s, now);
+            }
+          });
+        }
+
+        function quickPause() {
+          mutateSync(function (s, now) {
+            MetisTimer.applyPause(s, now);
+          });
+        }
+
+        function quickEnd() {
+          mutateSync(function (s) {
+            var levels = MetisTimer.getActiveLevels(s);
+            s.timer = MetisTimer.defaultTimer();
+            s.pendingBridge = null;
+            s.hasStartedOnce = false;
+            s.timerStatus = "대기중";
+            s.regCloseAt = null;
+            s.totalSeconds = 0;
+            s.totalSecondsTickAt = null;
+            s.level = 1;
+            if (levels && levels.length) {
+              s.timer.levelIndex = 0;
+              s.timer.pausedRemainingSec = MetisTimer.levelDurationSec(levels[0]);
+              s.displayTime = MetisTimer.formatMMSS(s.timer.pausedRemainingSec);
+            } else {
+              s.displayTime = "00:00";
+            }
+          });
+        }
+
+        function adjustEntry(delta) {
+          mutateSync(function (s) {
+            var e = Math.max(0, Math.floor(Number(s.entry) || 0));
+            var p = Math.max(0, Math.floor(Number(s.player) || 0));
+            if (delta > 0) {
+              s.entry = e + 1;
+              s.player = p + 1;
+            } else {
+              s.entry = Math.max(0, e - 1);
+              s.player = Math.min(p, s.entry);
+            }
+          });
+        }
+
+        function adjustPlayer(delta) {
+          mutateSync(function (s) {
+            var e = Math.max(0, Math.floor(Number(s.entry) || 0));
+            var p = Math.max(0, Math.floor(Number(s.player) || 0));
+            if (delta > 0) s.player = Math.min(e, p + 1);
+            else s.player = Math.max(0, p - 1);
+          });
+        }
+
+        function handleQuickAction(action) {
+          if (typeof MetisAudio !== "undefined") MetisAudio.unlock();
+          quickFeedback();
+          if (action === "vol-plus") return setQuickMasterVolume(getQuickMasterVolume() + 0.1);
+          if (action === "vol-minus") return setQuickMasterVolume(getQuickMasterVolume() - 0.1);
+          if (action === "entry-plus") return adjustEntry(1);
+          if (action === "entry-minus") return adjustEntry(-1);
+          if (action === "player-plus") return adjustPlayer(1);
+          if (action === "player-minus") return adjustPlayer(-1);
+          if (action === "level-plus") return adjustLevel(1);
+          if (action === "level-minus") return adjustLevel(-1);
+          if (action === "min-plus") return adjustCurrentRemaining(60);
+          if (action === "min-minus") return adjustCurrentRemaining(-60);
+          if (action === "sec-plus") return adjustCurrentRemaining(1);
+          if (action === "sec-minus") return adjustCurrentRemaining(-1);
+          if (action === "start") return quickStart();
+          if (action === "pause") return quickPause();
+          if (action === "end") return quickEnd();
+        }
+
+        function bindAudioUnlockOnce() {
+          if (audioUnlockBound || typeof MetisAudio === "undefined") return;
+          audioUnlockBound = true;
+          function onceUnlock() {
+            MetisAudio.unlock();
+            window.removeEventListener("pointerdown", onceUnlock, true);
+            window.removeEventListener("keydown", onceUnlock, true);
+            window.removeEventListener("touchstart", onceUnlock, true);
+          }
+          window.addEventListener("pointerdown", onceUnlock, true);
+          window.addEventListener("keydown", onceUnlock, true);
+          window.addEventListener("touchstart", onceUnlock, true);
+        }
+        bindAudioUnlockOnce();
+        loadQuickVolume();
+        refreshQuickPanelVisibility();
+        window.addEventListener("mousemove", function (e) {
+          var bottomBand = 50;
+          quickHoverBottom = window.innerHeight - e.clientY <= bottomBand;
+          refreshQuickPanelVisibility();
+        });
+        if (quickPanel) {
+          quickPanel.addEventListener("mouseenter", function () {
+            quickHoverPanel = true;
+            refreshQuickPanelVisibility();
+          });
+          quickPanel.addEventListener("mouseleave", function () {
+            quickHoverPanel = false;
+            refreshQuickPanelVisibility();
+          });
+        }
+        if (quickPanel) {
+          quickPanel.addEventListener("click", function (e) {
+            var t = e.target;
+            if (!(t instanceof HTMLButtonElement)) return;
+            var action = t.getAttribute("data-quick");
+            if (action) handleQuickAction(action);
+          });
+        }
+        tapRoot.addEventListener("click", function () {
+          if (typeof MetisAudio !== "undefined") MetisAudio.unlock();
+          togglePauseResume();
+        });
+        tapRoot.addEventListener("keydown", function (e) {
+          if (e.key === " " || e.key === "Enter") {
+            e.preventDefault();
+            if (typeof MetisAudio !== "undefined") MetisAudio.unlock();
+            togglePauseResume();
+          }
+        });
+
+        setInterval(tick, MAIN_TICK_MS);
+
         MetisTimer.subscribeSync(refreshFromBroadcast);
         window.addEventListener("storage", refreshFromBroadcast);
 

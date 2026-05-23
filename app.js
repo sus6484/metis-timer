@@ -18,31 +18,44 @@
       avgStack: 0,
       player: 0,
       entry: 0,
-      rebuy: 0,
-      addon: 0,
-      early: 0,
       level: 1,
       entryChips: 50000,
-      earlyChips: 0,
       regCloseLevel: 15,
-      rebuyChips: 0,
-      addonChips: 0,
+      prizeText: "",
+      prizeItems: [],
+      totalPrizeText: "",
+      tournamentInfo: "",
+      regCloseAt: null,
     };
   }
 
   var defaultPresets = function () {
+    var dr = defaultRemote();
     return [
-      {
-        id: "preset_default",
-        name: "스탠다드 15레벨",
-        levels: [
-          { sb: 100, bb: 200, ante: 200, minutes: 20 },
-          { sb: 200, bb: 400, ante: 400, minutes: 20 },
-          { sb: 300, bb: 600, ante: 600, minutes: 20 },
-          { sb: 400, bb: 800, ante: 800, minutes: 20 },
-          { sb: 500, bb: 1000, ante: 1000, minutes: 20 },
-        ],
-      },
+      Object.assign(
+        {
+          id: "preset_default",
+          name: "스탠다드 15레벨",
+          levels: [
+            { sb: 100, bb: 200, ante: 200, minutes: 20 },
+            { sb: 200, bb: 400, ante: 400, minutes: 20 },
+            { sb: 300, bb: 600, ante: 600, minutes: 20 },
+            { sb: 400, bb: 800, ante: 800, minutes: 20 },
+            { sb: 500, bb: 1000, ante: 1000, minutes: 20 },
+          ],
+        },
+        {
+          tournamentName: dr.tournamentName,
+          totalPrizeText: dr.totalPrizeText,
+          tournamentInfo: dr.tournamentInfo,
+          prizeText: dr.prizeText,
+          prizeItems: dr.prizeItems.slice(),
+          player: dr.player,
+          entry: dr.entry,
+          entryChips: dr.entryChips,
+          regCloseLevel: dr.regCloseLevel,
+        }
+      ),
     ];
   };
 
@@ -67,18 +80,40 @@
   }
 
   function ensureAdminPin() {
-    if (!getAdminPin()) setAdminPin("000000");
+    if (!getAdminPin()) setAdminPin("444444");
   }
 
   function getRemote() {
+    MetisTimer.setSyncPresetId(getActivePresetId());
+    var presets = getPresets();
+    var aid = getActivePresetId();
+    var embedded = {};
+    var po = null;
+    for (var j = 0; j < presets.length; j++) {
+      if (presets[j].id === aid) {
+        po = presets[j];
+        break;
+      }
+    }
+    if (po) embedded = pickEmbeddedTournament(po);
+    var r;
     var s = MetisTimer.readSyncState();
     if (s) {
-      return Object.assign({}, defaultRemote(), MetisTimer.pickRemoteSlice(s));
+      r = Object.assign({}, defaultRemote(), embedded, MetisTimer.pickRemoteSlice(s));
+    } else {
+      var data = loadJson(STORAGE.REMOTE, function () {
+        return {};
+      });
+      r = Object.assign({}, defaultRemote(), embedded, data);
     }
-    var data = loadJson(STORAGE.REMOTE, function () {
-      return {};
-    });
-    return Object.assign({}, defaultRemote(), data);
+    delete r.rebuy;
+    delete r.addon;
+    delete r.rebuyChips;
+    delete r.addonChips;
+    delete r.early;
+    delete r.earlyChips;
+    clampPlayerEntry(r);
+    return r;
   }
 
   function getPresets() {
@@ -88,6 +123,269 @@
 
   function savePresets(list) {
     localStorage.setItem(STORAGE.PRESETS, JSON.stringify(list));
+  }
+
+  /** 프리셋 객체에 함께 저장되는 대회·참가 정보 필드 */
+  var PRESET_TOURNAMENT_KEYS = [
+    "tournamentName",
+    "totalPrizeText",
+    "tournamentInfo",
+    "prizeText",
+    "prizeItems",
+    "player",
+    "entry",
+    "entryChips",
+    "regCloseLevel",
+  ];
+
+  function migrateLegacyTimerSync() {
+    try {
+      var legacy = localStorage.getItem("metis_timer_sync");
+      if (!legacy) return;
+      var aid = localStorage.getItem(STORAGE.ACTIVE_PRESET_ID);
+      if (!aid) return;
+      var nk = "timer_state_" + aid;
+      if (localStorage.getItem(nk)) return;
+      localStorage.setItem(nk, legacy);
+    } catch (e) {}
+  }
+
+  function hydrateAllPresetTournaments() {
+    var list = getPresets();
+    var d = defaultRemote();
+    var changed = false;
+    list.forEach(function (p) {
+      PRESET_TOURNAMENT_KEYS.forEach(function (k) {
+        if (p[k] === undefined) {
+          p[k] = d[k];
+          changed = true;
+        }
+      });
+    });
+    if (changed) savePresets(list);
+  }
+
+  function pickEmbeddedTournament(p) {
+    var o = {};
+    if (!p || typeof p !== "object") return o;
+    for (var i = 0; i < PRESET_TOURNAMENT_KEYS.length; i++) {
+      var k = PRESET_TOURNAMENT_KEYS[i];
+      if (p[k] !== undefined) o[k] = p[k];
+    }
+    return o;
+  }
+
+  function mergeRemoteIntoActivePreset() {
+    var aid = getActivePresetId();
+    if (!aid) return;
+    var list = getPresets();
+    var idx = list.findIndex(function (x) {
+      return x.id === aid;
+    });
+    if (idx < 0) return;
+    for (var i = 0; i < PRESET_TOURNAMENT_KEYS.length; i++) {
+      var k = PRESET_TOURNAMENT_KEYS[i];
+      if (remoteState[k] !== undefined) list[idx][k] = remoteState[k];
+    }
+    savePresets(list);
+  }
+
+  function tournamentSliceFromRemote() {
+    var o = {};
+    for (var i = 0; i < PRESET_TOURNAMENT_KEYS.length; i++) {
+      var k = PRESET_TOURNAMENT_KEYS[i];
+      if (remoteState[k] !== undefined) o[k] = remoteState[k];
+    }
+    return o;
+  }
+
+  /** 새 프리셋 추가 시 리모컨 값을 복사하지 않고 쓰는 초기 대회 데이터 */
+  function emptyPresetTournamentSlice() {
+    return {
+      tournamentName: "새 대회",
+      totalPrizeText: "",
+      tournamentInfo: "",
+      prizeText: "",
+      prizeItems: [],
+      player: 0,
+      entry: 0,
+      entryChips: 0,
+      regCloseLevel: 0,
+    };
+  }
+
+  var PRESET_EXPORT_KEY = "metisPresetExport";
+  var PRESET_EXPORT_VERSION = 1;
+
+  function deepClone(obj) {
+    try {
+      return JSON.parse(JSON.stringify(obj));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function slugForFilename(name) {
+    var s = String(name || "preset")
+      .trim()
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+      .replace(/\s+/g, "_")
+      .slice(0, 48);
+    return s || "preset";
+  }
+
+  /** 내보내기용: 선택 프리셋만 직렬화 (대회 정보 필드 포함) */
+  function buildExportPayload(preset) {
+    var p = deepClone(preset);
+    if (!p || !p.levels) return null;
+    var out = {
+      name: String(p.name || "").trim() || "프리셋",
+      levels: p.levels,
+    };
+    for (var ti = 0; ti < PRESET_TOURNAMENT_KEYS.length; ti++) {
+      var tk = PRESET_TOURNAMENT_KEYS[ti];
+      if (p[tk] !== undefined) out[tk] = p[tk];
+    }
+    if (
+      p.regCloseAfterPlayLevel != null &&
+      Number.isFinite(Number(p.regCloseAfterPlayLevel)) &&
+      Math.floor(Number(p.regCloseAfterPlayLevel)) >= 1
+    ) {
+      out.regCloseAfterPlayLevel = Math.floor(Number(p.regCloseAfterPlayLevel));
+    }
+    if (
+      p.preGameWaitMinutes != null &&
+      Number.isFinite(Number(p.preGameWaitMinutes)) &&
+      Math.floor(Number(p.preGameWaitMinutes)) >= 1
+    ) {
+      out.preGameWaitMinutes = Math.floor(Number(p.preGameWaitMinutes));
+    }
+    return out;
+  }
+
+  function validateImportedPresetPayload(raw) {
+    if (!raw || typeof raw !== "object") return "파일 형식이 올바르지 않습니다.";
+    var name = String(raw.name != null ? raw.name : "").trim();
+    if (!name) return "프리셋 이름이 없습니다.";
+    var levels = raw.levels;
+    if (!Array.isArray(levels) || levels.length < 1) return "레벨 목록이 비어 있습니다.";
+    var playRows = 0;
+    for (var i = 0; i < levels.length; i++) {
+      var row = levels[i];
+      if (!row || typeof row !== "object") return "레벨 " + (i + 1) + " 행이 올바르지 않습니다.";
+      if (row.type === "break") {
+        var bm = Math.floor(Number(row.minutes));
+        if (!Number.isFinite(bm) || bm < 1 || bm > 999) return "브레이크 행의 지속(분)을 확인해 주세요.";
+      } else {
+        playRows++;
+        var sb = parseInt(row.sb, 10);
+        var bb = parseInt(row.bb, 10);
+        var ante = parseInt(row.ante, 10);
+        var minutes = parseInt(row.minutes, 10);
+        if (!Number.isFinite(sb) || sb < 0 || !Number.isFinite(bb) || bb < 0)
+          return "레벨 행 " + (i + 1) + ": 스몰/빅 블라인드를 확인해 주세요.";
+        if (!Number.isFinite(ante) || ante < 0) return "레벨 행 " + (i + 1) + ": 앤티를 확인해 주세요.";
+        if (!Number.isFinite(minutes) || minutes < 1 || minutes > 999)
+          return "레벨 행 " + (i + 1) + ": 지속(분)을 확인해 주세요.";
+      }
+    }
+    if (playRows < 1) return "플레이 레벨(블라인드)이 최소 1개 필요합니다.";
+    return null;
+  }
+
+  function normalizeImportedPreset(raw) {
+    var err = validateImportedPresetPayload(raw);
+    if (err) return { error: err };
+    var levels = deepClone(raw.levels);
+    var dr = defaultRemote();
+    var preset = {
+      id: uid(),
+      name: String(raw.name).trim(),
+      levels: levels,
+    };
+    for (var ti = 0; ti < PRESET_TOURNAMENT_KEYS.length; ti++) {
+      var tk = PRESET_TOURNAMENT_KEYS[ti];
+      if (raw[tk] !== undefined) preset[tk] = raw[tk];
+      else preset[tk] = dr[tk];
+    }
+    if (preset.prizeItems == null || !Array.isArray(preset.prizeItems)) preset.prizeItems = [];
+    if (raw.regCloseAfterPlayLevel != null) {
+      var rcl = Math.floor(Number(raw.regCloseAfterPlayLevel));
+      if (Number.isFinite(rcl) && rcl >= 1 && rcl <= 999) preset.regCloseAfterPlayLevel = rcl;
+    }
+    if (raw.preGameWaitMinutes != null) {
+      var pwm = Math.floor(Number(raw.preGameWaitMinutes));
+      if (Number.isFinite(pwm) && pwm >= 1 && pwm <= 999) preset.preGameWaitMinutes = pwm;
+    }
+    return { preset: preset };
+  }
+
+  function parsePresetImportJson(text) {
+    var obj;
+    try {
+      obj = JSON.parse(text);
+    } catch (e) {
+      return { error: "JSON을 읽을 수 없습니다." };
+    }
+    if (obj && obj[PRESET_EXPORT_KEY] === PRESET_EXPORT_VERSION && obj.preset) {
+      return normalizeImportedPreset(obj.preset);
+    }
+    if (
+      obj &&
+      Array.isArray(obj.levels) &&
+      obj.levels.length &&
+      String(obj.name != null ? obj.name : "").trim()
+    ) {
+      return normalizeImportedPreset(obj);
+    }
+    return { error: "Metis 프리셋 파일이 아니거나 형식이 맞지 않습니다." };
+  }
+
+  function exportSelectedPresetToFile() {
+    var id = presetSelect.value;
+    if (!id) {
+      alert("먼저 목록에서 프리셋을 선택해 주세요.");
+      return;
+    }
+    var p = getPresets().find(function (x) {
+      return x.id === id;
+    });
+    if (!p) {
+      alert("선택한 프리셋을 찾을 수 없습니다.");
+      return;
+    }
+    var payload = buildExportPayload(p);
+    if (!payload) {
+      alert("내보낼 데이터가 없습니다.");
+      return;
+    }
+    var wrap = {};
+    wrap[PRESET_EXPORT_KEY] = PRESET_EXPORT_VERSION;
+    wrap.exportedAt = new Date().toISOString();
+    wrap.preset = payload;
+    var json = JSON.stringify(wrap, null, 2);
+    var blob = new Blob([json], { type: "application/json;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "metis-preset-" + slugForFilename(payload.name) + ".json";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function applyImportedPreset(preset) {
+    var list = getPresets().slice();
+    list.push(preset);
+    savePresets(list);
+    setActivePresetId(preset.id);
+    renderPresets();
+    alignTimerToCurrentLevel();
+    persistAll();
+    renderRemote();
+    alert('프리셋 "' + preset.name + '" 을(를) 가져왔습니다.');
   }
 
   function getActivePresetId() {
@@ -102,10 +400,14 @@
     return "p_" + Math.random().toString(36).slice(2, 11);
   }
 
+  migrateLegacyTimerSync();
+  hydrateAllPresetTournaments();
   var remoteState = getRemote();
   var editingPresetId = null;
 
   function buildFullSync() {
+    MetisTimer.setSyncPresetId(getActivePresetId());
+    mergeRemoteIntoActivePreset();
     var prev = MetisTimer.readSyncState();
     var presets = getPresets();
     var aid = getActivePresetId();
@@ -113,13 +415,27 @@
       presets: presets,
       activePresetId: aid,
     });
+    if (
+      prev &&
+      typeof prev.totalScheduleCommittedSec === "number" &&
+      Number.isFinite(prev.totalScheduleCommittedSec)
+    ) {
+      base.totalScheduleCommittedSec = Math.max(
+        0,
+        Math.floor(prev.totalScheduleCommittedSec)
+      );
+    }
     var t = prev && prev.timer ? prev.timer : MetisTimer.defaultTimer();
     base.timer = MetisTimer.normalizeTimer(t, base);
     MetisTimer.syncLevelField(base);
+    base.regCloseAt = null;
     return base;
   }
 
   function persistAll() {
+    mergeRemoteIntoActivePreset();
+    clampPlayerEntry(remoteState);
+    MetisTimer.setSyncPresetId(getActivePresetId());
     MetisTimer.writeSyncState(buildFullSync());
   }
 
@@ -132,6 +448,7 @@
   }
 
   function alignTimerToCurrentLevel() {
+    MetisTimer.setSyncPresetId(getActivePresetId());
     var s = MetisTimer.readSyncState() || buildFullSync();
     var levels = MetisTimer.getActiveLevels(s);
     if (!levels || !levels.length) {
@@ -141,6 +458,7 @@
     var idx = Math.max(0, (parseInt(remoteState.level, 10) || 1) - 1);
     idx = Math.min(idx, levels.length - 1);
     s.timer = MetisTimer.normalizeTimer(s.timer || {}, s);
+    s.timer.bridge = null;
     s.timer.levelIndex = idx;
     MetisTimer.syncLevelField(s);
     var dur = MetisTimer.levelDurationSec(levels[s.timer.levelIndex]);
@@ -163,28 +481,59 @@
   var pinInputs = Array.from(document.querySelectorAll(".pin-digit"));
   var authError = document.getElementById("auth-error");
   var btnUnlock = document.getElementById("btn-unlock");
-  var btnLogout = document.getElementById("btn-logout");
-  var remoteTitle = document.getElementById("remote-title");
   var elTimerStatus = document.getElementById("timer-status");
   var elTimerClock = document.getElementById("timer-clock");
   var presetSelect = document.getElementById("preset-select");
   var presetTbody = document.getElementById("preset-tbody");
   var btnPresetAdd = document.getElementById("btn-preset-add");
-  var btnOpenTimer = document.getElementById("btn-open-timer");
-  var btnRestart = document.getElementById("btn-restart");
+  var btnStart = document.getElementById("btn-start");
   var btnPause = document.getElementById("btn-pause");
+  var btnRefresh = document.getElementById("btn-refresh");
+  var btnStop = document.getElementById("btn-stop");
 
   var modal = document.getElementById("modal-preset");
   var modalPanel = document.getElementById("modal-preset-panel");
   var modalTitle = document.getElementById("modal-title");
   var modalName = document.getElementById("modal-name");
-  var modalLevels = document.getElementById("modal-levels");
+  var modalLevelsTbody = document.getElementById("modal-levels-tbody");
+  var modalAddLevel = document.getElementById("modal-add-level");
+  var modalAddBreak = document.getElementById("modal-add-break");
+  var modalBulkMinutes = document.getElementById("modal-bulk-minutes");
+  var modalBulkApply = document.getElementById("modal-bulk-apply");
   var modalCancel = document.getElementById("modal-cancel");
   var modalSave = document.getElementById("modal-save");
+  var modalRegCloseLevel = document.getElementById("modal-reg-close-level");
+  var modalPreWaitMinutes = document.getElementById("modal-pre-wait-minutes");
+  var modalNewPresetMeta = document.getElementById("modal-new-preset-meta");
+  var modalNewTournamentName = document.getElementById("modal-new-tournament-name");
+  var modalNewTournamentInfo = document.getElementById("modal-new-tournament-info");
+  var modalNewPlayer = document.getElementById("modal-new-player");
+  var modalNewEntry = document.getElementById("modal-new-entry");
+  var modalNewEntryChips = document.getElementById("modal-new-entry-chips");
+  var modalNewTotalPrize = document.getElementById("modal-new-total-prize");
 
-  var counters = ["player", "entry", "rebuy", "addon"];
+  var remoteMeta = document.getElementById("remote-meta");
+  var inputTournamentName = document.getElementById("input-tournament-name");
+  var inputTotalPrize = document.getElementById("input-total-prize");
+  var btnOpenPrizeModal = document.getElementById("btn-open-prize-modal");
+  var inputTournamentInfo = document.getElementById("input-tournament-info");
+  var modalPrize = document.getElementById("modal-prize");
+  var modalPrizePanel = document.getElementById("modal-prize-panel");
+  var modalPrizeTbody = document.getElementById("modal-prize-tbody");
+  var modalPrizeAdd = document.getElementById("modal-prize-add");
+  var modalPrizeCancel = document.getElementById("modal-prize-cancel");
+  var modalPrizeSave = document.getElementById("modal-prize-save");
+  var prizeSortable = null;
+  var presetLevelSortable = null;
 
   var remoteEngineId = null;
+  var lastRemoteSeenUpdated = 0;
+
+  function syncLastSeenFromStore() {
+    MetisTimer.setSyncPresetId(getActivePresetId());
+    var s = MetisTimer.readSyncState();
+    if (s && s.updatedAt) lastRemoteSeenUpdated = s.updatedAt;
+  }
 
   function showScreen(which) {
     screenAuth.classList.toggle("is-active", which === "auth");
@@ -232,18 +581,11 @@
       renderRemote();
       renderPresets();
       persistAll();
+      syncLastSeenFromStore();
     } else {
       authError.textContent = "비밀번호가 올바르지 않습니다.";
       clearPin();
     }
-  }
-
-  function logout() {
-    setSession(false);
-    clearPin();
-    authError.textContent = "";
-    showScreen("auth");
-    if (pinInputs[0]) pinInputs[0].focus();
   }
 
   function startRemoteEngine() {
@@ -251,14 +593,48 @@
     remoteEngineId = setInterval(function () {
       if (!isSessionOk() || !screenRemote.classList.contains("is-active"))
         return;
+      MetisTimer.setSyncPresetId(getActivePresetId());
+      var syncPeek = MetisTimer.readSyncState();
+      if (syncPeek) {
+        var u = syncPeek.updatedAt || 0;
+        if (u > lastRemoteSeenUpdated) {
+          lastRemoteSeenUpdated = u;
+          remoteState = getRemote();
+          renderRemote();
+        }
+      }
       var step = MetisTimer.engineStep();
       if (!step) return;
       elTimerClock.textContent = MetisTimer.formatMMSS(step.rem);
       elTimerStatus.textContent = step.state.timerStatus || "대기중";
       Object.assign(remoteState, MetisTimer.pickRemoteSlice(step.state));
+      clampPlayerEntry(remoteState);
       var lvlEl = document.getElementById("val-level");
       if (lvlEl) lvlEl.textContent = String(step.state.level || 1);
-    }, 200);
+      var vPl = document.getElementById("val-player");
+      var vEn = document.getElementById("val-entry");
+      if (vPl && vPl.tagName === "INPUT" && document.activeElement !== vPl) {
+        vPl.value = String(remoteState.player != null ? remoteState.player : 0);
+      }
+      if (vEn && vEn.tagName === "INPUT" && document.activeElement !== vEn) {
+        vEn.value = String(remoteState.entry != null ? remoteState.entry : 0);
+      }
+      var ts = computeTotalStack(remoteState);
+      var av = computeAvgStack(remoteState);
+      document.getElementById("val-total-chips").textContent = formatNum(ts);
+      document.getElementById("val-avg-stack").textContent = formatNum(av);
+      var ecD = document.getElementById("val-entry-chips-display");
+      if (
+        ecD &&
+        ecD.tagName === "INPUT" &&
+        document.activeElement !== ecD
+      ) {
+        ecD.value = String(Math.max(0, Math.floor(Number(remoteState.entryChips) || 0)));
+      }
+      var s2 = MetisTimer.readSyncState();
+      if (s2 && s2.updatedAt && s2.updatedAt > lastRemoteSeenUpdated)
+        lastRemoteSeenUpdated = s2.updatedAt;
+    }, 100);
   }
 
   function stopRemoteEngine() {
@@ -268,28 +644,160 @@
     }
   }
 
-  function bindCounter(name) {
-    var valEl = document.getElementById("val-" + name);
-    var minus = document.getElementById("btn-" + name + "-minus");
-    var plus = document.getElementById("btn-" + name + "-plus");
-    function update() {
-      valEl.textContent = String(remoteState[name]);
+  function normalizePrizeItems(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map(function (item) {
+        if (!item || typeof item !== "object") return null;
+        var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
+        var amountNum = Math.max(0, Math.floor(Number(item.amount) || 0));
+        if (!rank || !amountNum) return null;
+        return { rank: rank, amount: amountNum };
+      })
+      .filter(Boolean);
+  }
+
+  function formatAmountWithCommas(value) {
+    var digits = String(value == null ? "" : value).replace(/\D/g, "");
+    if (!digits) return "";
+    return Number(digits).toLocaleString("ko-KR");
+  }
+
+  function createPrizeModalRow(rank, amount) {
+    if (!modalPrizeTbody) return null;
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      '<td><span class="prize-row-handle" aria-label="순서 변경" title="드래그로 순서 변경">≡</span></td>' +
+      '<td><input type="text" class="prize-row-rank" maxlength="24" placeholder="예: 1등" /></td>' +
+      '<td><input type="text" class="prize-row-amount" inputmode="numeric" maxlength="20" placeholder="예: 1,500,000" /></td>' +
+      '<td><button type="button" class="btn-prize-row-remove">삭제</button></td>';
+    var rankInput = tr.querySelector(".prize-row-rank");
+    var amountInput = tr.querySelector(".prize-row-amount");
+    if (rankInput) rankInput.value = rank || "";
+    if (amountInput) amountInput.value = formatAmountWithCommas(amount);
+    modalPrizeTbody.appendChild(tr);
+    return tr;
+  }
+
+  function getPrizeItemsFromModal() {
+    if (!modalPrizeTbody) return [];
+    var rows = modalPrizeTbody.querySelectorAll("tr");
+    var out = [];
+    rows.forEach(function (row) {
+      var rankInput = row.querySelector(".prize-row-rank");
+      var amountInput = row.querySelector(".prize-row-amount");
+      var rank = rankInput ? String(rankInput.value || "").trim().slice(0, 24) : "";
+      var amountDigits = amountInput
+        ? String(amountInput.value || "").replace(/\D/g, "")
+        : "";
+      var amount = amountDigits ? Math.max(0, Math.floor(Number(amountDigits) || 0)) : 0;
+      if (!rank || !amount) return;
+      out.push({ rank: rank, amount: amount });
+    });
+    return out;
+  }
+
+  function renderPrizeModalFromRemoteState() {
+    if (!modalPrizeTbody) return;
+    modalPrizeTbody.innerHTML = "";
+    var items = normalizePrizeItems(remoteState.prizeItems || []);
+    if (!items.length) {
+      createPrizeModalRow("", "");
+      return;
+    }
+    items.forEach(function (item) {
+      createPrizeModalRow(item.rank, item.amount);
+    });
+  }
+
+  function openPrizeModal() {
+    if (!modalPrize) return;
+    renderPrizeModalFromRemoteState();
+    modalPrize.classList.add("is-open");
+  }
+
+  function closePrizeModal() {
+    if (!modalPrize) return;
+    modalPrize.classList.remove("is-open");
+  }
+
+  function savePrizeModal() {
+    var items = normalizePrizeItems(getPrizeItemsFromModal());
+    remoteState.prizeItems = items;
+    remoteState.prizeText = "";
+    if ("guaranteedPrize" in remoteState) delete remoteState.guaranteedPrize;
+    persistAll();
+    renderRemote();
+    closePrizeModal();
+  }
+
+  function ensurePrizeSortable() {
+    if (!modalPrizeTbody || prizeSortable || typeof Sortable === "undefined") return;
+    prizeSortable = Sortable.create(modalPrizeTbody, {
+      animation: 180,
+      handle: ".prize-row-handle",
+      draggable: "tr",
+      ghostClass: "prize-sortable-ghost",
+      chosenClass: "prize-sortable-chosen",
+      dragClass: "prize-sortable-drag",
+    });
+  }
+
+  function syncMetaFromInputs() {
+    if (!inputTournamentName) return;
+    var tnRaw = inputTournamentName.value || "";
+    remoteState.tournamentName = tnRaw.trim()
+      ? tnRaw
+      : defaultRemote().tournamentName;
+    if (inputTotalPrize) remoteState.totalPrizeText = inputTotalPrize.value;
+    remoteState.tournamentInfo = inputTournamentInfo
+      ? inputTournamentInfo.value
+      : "";
+  }
+
+  function fillMetaInputsFromRemoteState() {
+    if (!inputTournamentName || !remoteMeta) return;
+    if (remoteMeta.contains(document.activeElement)) return;
+    inputTournamentName.value = remoteState.tournamentName || "";
+    if (inputTotalPrize)
+      inputTotalPrize.value =
+        remoteState.totalPrizeText != null ? String(remoteState.totalPrizeText) : "";
+    if (inputTournamentInfo)
+      inputTournamentInfo.value = remoteState.tournamentInfo || "";
+  }
+
+  function bindMetaFormOnce() {
+    if (!inputTournamentName || inputTournamentName.dataset.bound) return;
+    inputTournamentName.dataset.bound = "1";
+    function pushMeta() {
+      syncMetaFromInputs();
       persistAll();
     }
-    minus.addEventListener("click", function () {
-      remoteState[name] = Math.max(0, (remoteState[name] | 0) - 1);
-      update();
-    });
-    plus.addEventListener("click", function () {
-      remoteState[name] = (remoteState[name] | 0) + 1;
-      update();
-    });
+    inputTournamentName.addEventListener("input", pushMeta);
+    inputTournamentName.addEventListener("change", pushMeta);
+    inputTournamentName.addEventListener("blur", pushMeta);
+    if (inputTotalPrize) {
+      inputTotalPrize.addEventListener("input", pushMeta);
+      inputTotalPrize.addEventListener("change", pushMeta);
+      inputTotalPrize.addEventListener("blur", pushMeta);
+    }
+    if (inputTournamentInfo) {
+      inputTournamentInfo.addEventListener("input", pushMeta);
+      inputTournamentInfo.addEventListener("change", pushMeta);
+      inputTournamentInfo.addEventListener("blur", pushMeta);
+    }
+  }
+
+  function setStatNumberInputIfNotFocused(id, rawVal) {
+    var el = document.getElementById(id);
+    if (!el || el.tagName !== "INPUT") return;
+    if (document.activeElement === el) return;
+    var n = Math.max(0, Math.floor(Number(rawVal) || 0));
+    el.value = String(n);
   }
 
   function renderRemote() {
     remoteState = getRemote();
-    remoteTitle.textContent =
-      "타이머 리모컨 — " + (remoteState.tournamentName || "토너먼트");
     elTimerStatus.textContent = remoteState.timerStatus || "대기중";
     var s = MetisTimer.readSyncState();
     var now = Date.now();
@@ -297,22 +805,28 @@
       ? MetisTimer.remainingSec(s, now)
       : parseTimeToSec(remoteState.displayTime);
     elTimerClock.textContent = MetisTimer.formatMMSS(rem);
-    counters.forEach(function (c) {
-      var el = document.getElementById("val-" + c);
-      if (el) el.textContent = String(remoteState[c] != null ? remoteState[c] : 0);
-    });
+    setStatNumberInputIfNotFocused(
+      "val-player",
+      remoteState.player != null ? remoteState.player : 0
+    );
+    setStatNumberInputIfNotFocused(
+      "val-entry",
+      remoteState.entry != null ? remoteState.entry : 0
+    );
     document.getElementById("val-total-chips").textContent = formatNum(
-      remoteState.totalChips
+      computeTotalStack(remoteState)
     );
     document.getElementById("val-avg-stack").textContent = formatNum(
-      remoteState.avgStack
+      computeAvgStack(remoteState)
     );
-    document.getElementById("val-early").textContent = String(
-      remoteState.early != null ? remoteState.early : 0
+    setStatNumberInputIfNotFocused(
+      "val-entry-chips-display",
+      remoteState.entryChips != null ? remoteState.entryChips : 0
     );
     document.getElementById("val-level").textContent = String(
       remoteState.level != null ? remoteState.level : 1
     );
+    fillMetaInputsFromRemoteState();
   }
 
   function parseTimeToSec(mmss) {
@@ -328,6 +842,125 @@
   function formatNum(n) {
     var x = Number(n) || 0;
     return x.toLocaleString("ko-KR");
+  }
+
+  function clampPlayerEntry(rs) {
+    var e = Math.max(0, Math.floor(Number(rs.entry) || 0));
+    var p = Math.max(0, Math.floor(Number(rs.player) || 0));
+    rs.entry = e;
+    rs.player = Math.min(p, e);
+  }
+
+  function computeTotalStack(rs) {
+    var ent = Math.max(0, Math.floor(Number(rs.entry) || 0));
+    var chips = Math.max(0, Math.floor(Number(rs.entryChips) || 0));
+    return ent * chips;
+  }
+
+  function computeAvgStack(rs) {
+    var p = Math.max(0, Math.floor(Number(rs.player) || 0));
+    if (p <= 0) return 0;
+    return Math.floor(computeTotalStack(rs) / p);
+  }
+
+  function bindEntryPlayerCounters() {
+    var valP = document.getElementById("val-player");
+    var valE = document.getElementById("val-entry");
+    function refreshEntryPlayerDisplays() {
+      clampPlayerEntry(remoteState);
+      if (valP && valP.tagName === "INPUT") valP.value = String(remoteState.player);
+      if (valE && valE.tagName === "INPUT") valE.value = String(remoteState.entry);
+      var ts = computeTotalStack(remoteState);
+      var av = computeAvgStack(remoteState);
+      document.getElementById("val-total-chips").textContent = formatNum(ts);
+      document.getElementById("val-avg-stack").textContent = formatNum(av);
+    }
+    function syncFromInputs() {
+      var p = valP ? parseInt(String(valP.value).trim(), 10) : NaN;
+      var e = valE ? parseInt(String(valE.value).trim(), 10) : NaN;
+      remoteState.player = Math.max(0, Number.isFinite(p) ? p : 0);
+      remoteState.entry = Math.max(0, Number.isFinite(e) ? e : 0);
+      clampPlayerEntry(remoteState);
+      refreshEntryPlayerDisplays();
+      persistAll();
+    }
+    function push() {
+      refreshEntryPlayerDisplays();
+      persistAll();
+    }
+    function bindStatInput(el, handler) {
+      if (!el || el.tagName !== "INPUT") return;
+      el.addEventListener("change", handler);
+      el.addEventListener("blur", handler);
+    }
+    bindStatInput(valP, syncFromInputs);
+    bindStatInput(valE, syncFromInputs);
+    document.getElementById("btn-entry-plus").addEventListener("click", function () {
+      remoteState.entry = (remoteState.entry | 0) + 1;
+      remoteState.player = (remoteState.player | 0) + 1;
+      push();
+    });
+    document.getElementById("btn-entry-minus").addEventListener("click", function () {
+      remoteState.entry = Math.max(0, (remoteState.entry | 0) - 1);
+      remoteState.player = Math.min(remoteState.player | 0, remoteState.entry);
+      push();
+    });
+    document.getElementById("btn-player-plus").addEventListener("click", function () {
+      remoteState.player = Math.min((remoteState.player | 0) + 1, remoteState.entry | 0);
+      push();
+    });
+    document.getElementById("btn-player-minus").addEventListener("click", function () {
+      remoteState.player = Math.max(0, (remoteState.player | 0) - 1);
+      push();
+    });
+  }
+
+  function bindEntryChipsCounter() {
+    var valEc = document.getElementById("val-entry-chips-display");
+    var step = 5000;
+    function refreshStacks() {
+      if (valEc && valEc.tagName === "INPUT") {
+        valEc.value = String(Math.max(0, Math.floor(Number(remoteState.entryChips) || 0)));
+      }
+      document.getElementById("val-total-chips").textContent = formatNum(
+        computeTotalStack(remoteState)
+      );
+      document.getElementById("val-avg-stack").textContent = formatNum(
+        computeAvgStack(remoteState)
+      );
+    }
+    function syncChipsFromInput() {
+      if (!valEc || valEc.tagName !== "INPUT") return;
+      var v = parseInt(valEc.value, 10);
+      remoteState.entryChips = Math.max(0, Number.isFinite(v) ? v : 0);
+      refreshStacks();
+      persistAll();
+    }
+    function push() {
+      refreshStacks();
+      persistAll();
+    }
+    if (valEc && valEc.tagName === "INPUT") {
+      valEc.addEventListener("change", syncChipsFromInput);
+      valEc.addEventListener("blur", syncChipsFromInput);
+    }
+    document.getElementById("btn-entry-chips-plus").addEventListener("click", function () {
+      remoteState.entryChips = Math.max(0, (remoteState.entryChips | 0) + step);
+      push();
+    });
+    document.getElementById("btn-entry-chips-minus").addEventListener("click", function () {
+      remoteState.entryChips = Math.max(0, (remoteState.entryChips | 0) - step);
+      push();
+    });
+  }
+
+  function countPresetLevelRows(levels) {
+    if (!levels || !levels.length) return 0;
+    var n = 0;
+    for (var i = 0; i < levels.length; i++) {
+      if (!levels[i] || levels[i].type !== "break") n++;
+    }
+    return n;
   }
 
   function renderPresets() {
@@ -355,24 +988,36 @@
         "</td><td>" +
         escapeHtml(p.name) +
         "</td><td>" +
-        (p.levels ? p.levels.length : 0) +
+        countPresetLevelRows(p.levels) +
         '</td><td class="preset-actions"></td>';
       var cell = tr.querySelector(".preset-actions");
       cell.appendChild(
-        mkBtn("적용", "sm blue", function () {
+        mkBtn("적용", "blue", function () {
+          mergeRemoteIntoActivePreset();
           setActivePresetId(p.id);
           presetSelect.value = p.id;
+          remoteState = getRemote();
           alignTimerToCurrentLevel();
           persistAll();
+          renderRemote();
         })
       );
       cell.appendChild(
-        mkBtn("수정", "sm neutral", function () {
+        mkBtn("타이머 열기", "purple", function () {
+          window.open(
+            "timer.html?id=" + encodeURIComponent(p.id),
+            "metisTimer_" + p.id,
+            "noopener,noreferrer,width=1200,height=800"
+          );
+        })
+      );
+      cell.appendChild(
+        mkBtn("수정", "neutral", function () {
           openModalEdit(p.id);
         })
       );
       cell.appendChild(
-        mkBtn("삭제", "sm red", function () {
+        mkBtn("삭제", "red", function () {
           if (!confirm("이 프리셋을 삭제할까요?")) return;
           var next = presets.filter(function (x) {
             return x.id !== p.id;
@@ -402,29 +1047,267 @@
     return d.innerHTML;
   }
 
-  function levelsToText(levels) {
-    return JSON.stringify(levels, null, 2);
+  function defaultLevelRow() {
+    return { sb: 100, bb: 200, ante: 200, minutes: 20 };
   }
 
-  function parseLevelsText(text) {
-    var parsed = JSON.parse(text);
-    if (!Array.isArray(parsed)) throw new Error("레벨은 배열이어야 합니다.");
-    return parsed.map(function (row, i) {
-      var sb = Number(row.sb);
-      var bb = Number(row.bb);
-      var ante = Number(row.ante != null ? row.ante : 0);
-      var minutes = Number(row.minutes != null ? row.minutes : 20);
-      if (!Number.isFinite(sb) || !Number.isFinite(bb))
-        throw new Error("레벨 " + (i + 1) + ": sb/bb가 필요합니다.");
-      return { sb: sb, bb: bb, ante: ante, minutes: minutes };
+  function defaultBreakRow() {
+    return { type: "break", minutes: 10, adUrl: "./video/0318.mp4" };
+  }
+
+  function countModalLevelRows(trs) {
+    var n = 0;
+    for (var i = 0; i < trs.length; i++) {
+      if (trs[i].getAttribute("data-row-type") !== "break") n++;
+    }
+    return n;
+  }
+
+  function updateModalLevelLabels() {
+    if (!modalLevelsTbody) return;
+    var trs = modalLevelsTbody.querySelectorAll("tr");
+    var levelNum = 0;
+    var breakNum = 0;
+    trs.forEach(function (tr) {
+      var cell = tr.querySelector(".pl-lv-num");
+      if (!cell) return;
+      if (tr.getAttribute("data-row-type") === "break") {
+        breakNum++;
+        cell.textContent = "BREAK " + breakNum;
+      } else {
+        levelNum++;
+        cell.textContent = "LEVEL " + levelNum;
+      }
     });
+  }
+
+  function wireModalRowDelete(tr) {
+    tr.querySelector(".btn-pl-del").addEventListener("click", function () {
+      if (!modalLevelsTbody) return;
+      var all = modalLevelsTbody.querySelectorAll("tr");
+      if (all.length <= 1) {
+        alert("최소 1개의 행이 필요합니다.");
+        return;
+      }
+      var isBreak = tr.getAttribute("data-row-type") === "break";
+      if (!isBreak && countModalLevelRows(all) <= 1) {
+        alert("최소 1개의 레벨(블라인드) 행이 있어야 합니다.");
+        return;
+      }
+      tr.remove();
+      updateModalLevelLabels();
+    });
+  }
+
+  function modalActionsCellHtml() {
+    return (
+      '<td class="pl-row-actions">' +
+      '<button type="button" class="btn-pl-del" title="이 행 삭제">삭제</button>' +
+      "</td>"
+    );
+  }
+
+  function buildLevelRowTr(row) {
+    var tr = document.createElement("tr");
+    tr.setAttribute("data-row-type", "level");
+    var sb = Math.max(0, Math.floor(Number(row.sb) || 0));
+    var bb = Math.max(0, Math.floor(Number(row.bb) || 0));
+    var ante = Math.max(0, Math.floor(Number(row.ante != null ? row.ante : 0) || 0));
+    var minutes = Math.max(1, Math.min(999, Math.floor(Number(row.minutes != null ? row.minutes : 20) || 20)));
+    tr.innerHTML =
+      '<td class="pl-col-handle"><span class="pl-row-handle" aria-label="순서 변경" title="드래그로 순서 변경">≡</span></td>' +
+      '<td class="pl-lv-num"></td>' +
+      '<td><input type="number" class="pl-inp" data-f="sb" min="0" step="1" value="' +
+      sb +
+      '" /></td>' +
+      '<td><input type="number" class="pl-inp" data-f="bb" min="0" step="1" value="' +
+      bb +
+      '" /></td>' +
+      '<td><input type="number" class="pl-inp" data-f="ante" min="0" step="1" value="' +
+      ante +
+      '" /></td>' +
+      '<td><input type="number" class="pl-inp pl-inp-min" data-f="minutes" min="1" max="999" step="1" value="' +
+      minutes +
+      '" /></td>' +
+      '<td><input type="text" class="pl-inp pl-inp-ad" data-f="adUrl" disabled placeholder="브레이크 전용" spellcheck="false" /></td>' +
+      modalActionsCellHtml();
+    wireModalRowDelete(tr);
+    return tr;
+  }
+
+  function buildBreakRowTr(row) {
+    var tr = document.createElement("tr");
+    tr.setAttribute("data-row-type", "break");
+    var minutes = Math.max(1, Math.min(999, Math.floor(Number(row.minutes != null ? row.minutes : 10) || 10)));
+    var ad = row.adUrl != null ? String(row.adUrl) : "";
+    if (ad.length > 2000) ad = ad.slice(0, 2000);
+    tr.innerHTML =
+      '<td class="pl-col-handle"><span class="pl-row-handle" aria-label="순서 변경" title="드래그로 순서 변경">≡</span></td>' +
+      '<td class="pl-lv-num"></td>' +
+      '<td colspan="3" class="pl-break-merged">쉬는 시간 (블라인드 없음)</td>' +
+      '<td><input type="number" class="pl-inp pl-inp-min" data-f="minutes" min="1" max="999" step="1" value="' +
+      minutes +
+      '" /></td>' +
+      '<td><input type="text" class="pl-inp pl-inp-ad" data-f="adUrl" placeholder="예: ./video/0318.mp4" spellcheck="false" /></td>' +
+      modalActionsCellHtml();
+    var adInp = tr.querySelector('[data-f="adUrl"]');
+    if (adInp) adInp.value = ad;
+    wireModalRowDelete(tr);
+    return tr;
+  }
+
+  function ensurePresetLevelSortable() {
+    if (!modalLevelsTbody || presetLevelSortable || typeof Sortable === "undefined") return;
+    presetLevelSortable = Sortable.create(modalLevelsTbody, {
+      animation: 180,
+      handle: ".pl-row-handle",
+      draggable: "tr",
+      ghostClass: "prize-sortable-ghost",
+      chosenClass: "prize-sortable-chosen",
+      dragClass: "prize-sortable-drag",
+      onEnd: function () {
+        updateModalLevelLabels();
+      },
+    });
+  }
+
+  function renderModalLevelRows(levels) {
+    if (!modalLevelsTbody) return;
+    modalLevelsTbody.innerHTML = "";
+    var arr =
+      levels && levels.length
+        ? levels.map(function (r) {
+            if (r && r.type === "break") {
+              return {
+                type: "break",
+                minutes: r.minutes != null ? r.minutes : 10,
+                adUrl: r.adUrl != null ? String(r.adUrl) : "",
+              };
+            }
+            return {
+              sb: r.sb,
+              bb: r.bb,
+              ante: r.ante != null ? r.ante : 0,
+              minutes: r.minutes != null ? r.minutes : 20,
+            };
+          })
+        : [defaultLevelRow()];
+    arr.forEach(function (row) {
+      if (row.type === "break") modalLevelsTbody.appendChild(buildBreakRowTr(row));
+      else modalLevelsTbody.appendChild(buildLevelRowTr(row));
+    });
+    updateModalLevelLabels();
+    ensurePresetLevelSortable();
+  }
+
+  function collectModalLevels() {
+    if (!modalLevelsTbody) return { levels: [], error: "표를 불러오지 못했습니다." };
+    var trs = modalLevelsTbody.querySelectorAll("tr");
+    var out = [];
+    for (var i = 0; i < trs.length; i++) {
+      var tr = trs[i];
+      var minutes = parseInt(tr.querySelector('[data-f="minutes"]').value, 10);
+      if (!Number.isFinite(minutes) || minutes < 1) minutes = 20;
+      if (minutes > 999) minutes = 999;
+      var adInp = tr.querySelector('[data-f="adUrl"]');
+      var adRaw = adInp ? String(adInp.value).trim().slice(0, 2000) : "";
+
+      if (tr.getAttribute("data-row-type") === "break") {
+        var br = { type: "break", minutes: minutes };
+        if (adRaw) br.adUrl = adRaw;
+        out.push(br);
+        continue;
+      }
+
+      var sb = parseInt(tr.querySelector('[data-f="sb"]').value, 10);
+      var bb = parseInt(tr.querySelector('[data-f="bb"]').value, 10);
+      var ante = parseInt(tr.querySelector('[data-f="ante"]').value, 10);
+      if (!Number.isFinite(sb) || sb < 0 || !Number.isFinite(bb) || bb < 0) {
+        return {
+          levels: null,
+          error: "행 " + (i + 1) + " (레벨): 스몰/빅 블라인드에 0 이상의 숫자를 입력해 주세요.",
+        };
+      }
+      if (!Number.isFinite(ante) || ante < 0) ante = 0;
+      out.push({ sb: sb, bb: bb, ante: ante, minutes: minutes });
+    }
+    var levelCount = out.filter(function (r) {
+      return !r || r.type !== "break";
+    }).length;
+    if (levelCount < 1) {
+      return { levels: null, error: "최소 1개의 레벨(블라인드) 행이 필요합니다." };
+    }
+    return { levels: out, error: null };
+  }
+
+  function applyBulkMinutesToLevelRows() {
+    if (!modalLevelsTbody || !modalBulkMinutes) return;
+    var value = Math.floor(Number(modalBulkMinutes.value));
+    if (!Number.isFinite(value) || value < 1 || value > 999) {
+      alert("일괄 적용할 블라인드(분) 값을 1~999 사이로 입력해 주세요.");
+      modalBulkMinutes.focus();
+      return;
+    }
+    var rows = modalLevelsTbody.querySelectorAll('tr[data-row-type="level"]');
+    if (!rows.length) return;
+    rows.forEach(function (tr) {
+      var minInput = tr.querySelector('input[data-f="minutes"]');
+      if (!minInput) return;
+      minInput.value = String(value);
+      minInput.classList.remove("is-bulk-updated");
+      void minInput.offsetWidth;
+      minInput.classList.add("is-bulk-updated");
+    });
+  }
+
+  function showNewPresetMeta(show) {
+    if (!modalNewPresetMeta) return;
+    modalNewPresetMeta.classList.toggle("is-hidden", !show);
+    modalNewPresetMeta.setAttribute("aria-hidden", show ? "false" : "true");
+  }
+
+  function fillNewPresetMetaDefaults() {
+    if (modalNewTournamentName) modalNewTournamentName.value = "새 대회";
+    if (modalNewTournamentInfo) modalNewTournamentInfo.value = "";
+    if (modalNewPlayer) modalNewPlayer.value = "0";
+    if (modalNewEntry) modalNewEntry.value = "0";
+    if (modalNewEntryChips) modalNewEntryChips.value = "0";
+    if (modalNewTotalPrize) modalNewTotalPrize.value = "";
+  }
+
+  function collectNewPresetTournamentFromModal() {
+    var o = emptyPresetTournamentSlice();
+    if (modalNewTournamentName) {
+      var tn = String(modalNewTournamentName.value || "").trim();
+      o.tournamentName = tn || "새 대회";
+    }
+    if (modalNewTournamentInfo) {
+      o.tournamentInfo = String(modalNewTournamentInfo.value || "");
+    }
+    if (modalNewTotalPrize) {
+      o.totalPrizeText = String(modalNewTotalPrize.value || "");
+    }
+    var pl = modalNewPlayer ? parseInt(String(modalNewPlayer.value).trim(), 10) : 0;
+    var en = modalNewEntry ? parseInt(String(modalNewEntry.value).trim(), 10) : 0;
+    var ec = modalNewEntryChips
+      ? parseInt(String(modalNewEntryChips.value).trim(), 10)
+      : 0;
+    o.player = Math.max(0, Number.isFinite(pl) ? pl : 0);
+    o.entry = Math.max(0, Number.isFinite(en) ? en : 0);
+    o.entryChips = Math.max(0, Number.isFinite(ec) ? ec : 0);
+    clampPlayerEntry(o);
+    return o;
   }
 
   function openModalNew() {
     editingPresetId = null;
     modalTitle.textContent = "프리셋 추가";
     modalName.value = "새 프리셋";
-    modalLevels.value = levelsToText(defaultPresets()[0].levels);
+    if (modalRegCloseLevel) modalRegCloseLevel.value = "";
+    if (modalPreWaitMinutes) modalPreWaitMinutes.value = "";
+    showNewPresetMeta(true);
+    fillNewPresetMetaDefaults();
+    renderModalLevelRows([defaultLevelRow()]);
     modal.classList.add("is-open");
   }
 
@@ -436,7 +1319,25 @@
     editingPresetId = id;
     modalTitle.textContent = "프리셋 수정";
     modalName.value = p.name;
-    modalLevels.value = levelsToText(p.levels || []);
+    if (modalRegCloseLevel) {
+      var rcl = p.regCloseAfterPlayLevel;
+      modalRegCloseLevel.value =
+        rcl != null && Number.isFinite(Number(rcl)) && Number(rcl) >= 1
+          ? String(Math.floor(Number(rcl)))
+          : "";
+    }
+    if (modalPreWaitMinutes) {
+      var pwm = p.preGameWaitMinutes;
+      modalPreWaitMinutes.value =
+        pwm != null &&
+        Number.isFinite(Number(pwm)) &&
+        Math.floor(Number(pwm)) >= 1
+          ? String(Math.floor(Number(pwm)))
+          : "";
+    }
+    showNewPresetMeta(false);
+    var lv = p.levels && p.levels.length ? p.levels : [defaultLevelRow()];
+    renderModalLevelRows(lv);
     modal.classList.add("is-open");
   }
 
@@ -450,21 +1351,60 @@
       alert("이름을 입력해 주세요.");
       return;
     }
-    var levels;
-    try {
-      levels = parseLevelsText(modalLevels.value);
-    } catch (e) {
-      alert(e.message || "JSON 형식을 확인해 주세요.");
+    var collected = collectModalLevels();
+    if (collected.error) {
+      alert(collected.error);
       return;
+    }
+    var levels = collected.levels;
+    var regCloseAfterPlayLevel = null;
+    if (modalRegCloseLevel) {
+      var rcs = String(modalRegCloseLevel.value || "").trim();
+      if (rcs !== "") {
+        var rcp = parseInt(rcs, 10);
+        if (Number.isFinite(rcp) && rcp >= 1 && rcp <= 999) regCloseAfterPlayLevel = rcp;
+      }
+    }
+    var preGameWaitMinutes = null;
+    if (modalPreWaitMinutes) {
+      var pws = String(modalPreWaitMinutes.value || "").trim();
+      if (pws !== "") {
+        var pwp = parseInt(pws, 10);
+        if (Number.isFinite(pwp) && pwp >= 1 && pwp <= 999) preGameWaitMinutes = pwp;
+      }
     }
     var list = getPresets();
     if (editingPresetId) {
       var i = list.findIndex(function (x) {
         return x.id === editingPresetId;
       });
-      if (i >= 0) list[i] = Object.assign({}, list[i], { name: name, levels: levels });
+      if (i >= 0) {
+        var patch = {
+          name: name,
+          levels: levels,
+          regCloseAfterPlayLevel: regCloseAfterPlayLevel,
+          preGameWaitMinutes: preGameWaitMinutes,
+        };
+        if (editingPresetId === getActivePresetId()) {
+          Object.assign(patch, tournamentSliceFromRemote());
+        } else {
+          Object.assign(patch, pickEmbeddedTournament(list[i]));
+        }
+        list[i] = Object.assign({}, list[i], patch);
+      }
     } else {
-      list.push({ id: uid(), name: name, levels: levels });
+      list.push(
+        Object.assign(
+          {
+            id: uid(),
+            name: name,
+            levels: levels,
+            regCloseAfterPlayLevel: regCloseAfterPlayLevel,
+            preGameWaitMinutes: preGameWaitMinutes,
+          },
+          collectNewPresetTournamentFromModal()
+        )
+      );
     }
     savePresets(list);
     closeModal();
@@ -472,13 +1412,26 @@
     persistAll();
   }
 
-  function doRestart() {
+  function doStart() {
     try {
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       ctx.resume().catch(function () {});
     } catch (e1) {}
     var s = MetisTimer.readSyncState() || buildFullSync();
-    MetisTimer.applyRestart(s, Date.now());
+    var t = MetisTimer.normalizeTimer(s.timer || {}, s);
+    if (t.isRunning || t.bridge) {
+      MetisTimer.writeSyncState(s);
+      applySyncToRemoteState(s);
+      renderRemote();
+      return;
+    }
+    if (s.pendingBridge) {
+      MetisTimer.applyStartSequence(s, Date.now());
+    } else if (s.timerStatus === "일시정지") {
+      MetisTimer.applyResume(s, Date.now());
+    } else {
+      MetisTimer.applyStartSequence(s, Date.now());
+    }
     MetisTimer.writeSyncState(s);
     applySyncToRemoteState(s);
     renderRemote();
@@ -492,7 +1445,48 @@
     renderRemote();
   }
 
+  function doRefresh() {
+    var s = MetisTimer.readSyncState() || buildFullSync();
+    MetisTimer.applyLevelRefresh(s, Date.now());
+    MetisTimer.writeSyncState(s);
+    applySyncToRemoteState(s);
+    renderRemote();
+  }
+
+  function doStop() {
+    if (!window.confirm("타이머를 종료하시겠습니까?")) return;
+    MetisTimer.setSyncPresetId(getActivePresetId());
+    var now = Date.now();
+    var s = MetisTimer.readSyncState() || buildFullSync();
+    var levels = MetisTimer.getActiveLevels(s);
+
+    s.timer = MetisTimer.defaultTimer();
+    s.pendingBridge = null;
+    s.hasStartedOnce = false;
+    s.timerStatus = "대기중";
+    s.level = 1;
+    s.regCloseAt = null;
+    if (typeof s.totalScheduleCommittedSec === "number") s.totalScheduleCommittedSec = 0;
+    s.totalSeconds = 0;
+    s.totalSecondsTickAt = null;
+
+    if (levels && levels.length) {
+      s.timer.levelIndex = 0;
+      s.timer.pausedRemainingSec = MetisTimer.levelDurationSec(levels[0]);
+      s.displayTime = MetisTimer.formatMMSS(s.timer.pausedRemainingSec);
+    } else {
+      s.timer.levelIndex = 0;
+      s.timer.pausedRemainingSec = 0;
+      s.displayTime = "00:00";
+    }
+
+    MetisTimer.writeSyncState(s);
+    applySyncToRemoteState(s);
+    renderRemote();
+  }
+
   ensureAdminPin();
+  if (getAdminPin() === "000000") setAdminPin("444444");
 
   pinInputs.forEach(function (input, i) {
     input.addEventListener("input", function () {
@@ -510,22 +1504,81 @@
   });
 
   btnUnlock.addEventListener("click", tryUnlock);
-  btnLogout.addEventListener("click", logout);
 
-  if (btnRestart) btnRestart.addEventListener("click", doRestart);
+  if (btnStart) btnStart.addEventListener("click", doStart);
   if (btnPause) btnPause.addEventListener("click", doPause);
+  if (btnRefresh) btnRefresh.addEventListener("click", doRefresh);
+  if (btnStop) btnStop.addEventListener("click", doStop);
 
-  counters.forEach(bindCounter);
+  bindEntryPlayerCounters();
+  bindEntryChipsCounter();
+  bindMetaFormOnce();
 
   presetSelect.addEventListener("change", function () {
+    mergeRemoteIntoActivePreset();
     setActivePresetId(presetSelect.value);
+    remoteState = getRemote();
     alignTimerToCurrentLevel();
     persistAll();
+    renderRemote();
   });
 
   btnPresetAdd.addEventListener("click", openModalNew);
+
+  var btnPresetExport = document.getElementById("btn-preset-export");
+  var btnPresetImport = document.getElementById("btn-preset-import");
+  var inputPresetImport = document.getElementById("input-preset-import");
+  if (btnPresetExport) btnPresetExport.addEventListener("click", exportSelectedPresetToFile);
+  if (btnPresetImport && inputPresetImport) {
+    btnPresetImport.addEventListener("click", function () {
+      inputPresetImport.click();
+    });
+    inputPresetImport.addEventListener("change", function () {
+      var f = inputPresetImport.files && inputPresetImport.files[0];
+      inputPresetImport.value = "";
+      if (!f) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var text = String(reader.result || "");
+        var parsed = parsePresetImportJson(text);
+        if (parsed.error) {
+          alert(parsed.error);
+          return;
+        }
+        applyImportedPreset(parsed.preset);
+      };
+      reader.onerror = function () {
+        alert("파일을 읽지 못했습니다.");
+      };
+      reader.readAsText(f, "UTF-8");
+    });
+  }
+
   modalCancel.addEventListener("click", closeModal);
   modalSave.addEventListener("click", saveModal);
+  if (modalAddLevel && modalLevelsTbody) {
+    modalAddLevel.addEventListener("click", function () {
+      modalLevelsTbody.appendChild(buildLevelRowTr(defaultLevelRow()));
+      updateModalLevelLabels();
+    });
+  }
+  if (modalAddBreak && modalLevelsTbody) {
+    modalAddBreak.addEventListener("click", function () {
+      modalLevelsTbody.appendChild(buildBreakRowTr(defaultBreakRow()));
+      updateModalLevelLabels();
+    });
+  }
+  if (modalBulkApply) {
+    modalBulkApply.addEventListener("click", applyBulkMinutesToLevelRows);
+  }
+  if (modalBulkMinutes) {
+    modalBulkMinutes.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        applyBulkMinutesToLevelRows();
+      }
+    });
+  }
   modalPanel.addEventListener("click", function (e) {
     e.stopPropagation();
   });
@@ -533,33 +1586,64 @@
     if (e.target === modal) closeModal();
   });
 
-  btnOpenTimer.addEventListener("click", function () {
-    persistAll();
-    window.open(
-      "timer.html",
-      "metisTimer",
-      "noopener,noreferrer,width=1200,height=800"
-    );
-  });
+  if (btnOpenPrizeModal) {
+    btnOpenPrizeModal.addEventListener("click", openPrizeModal);
+  }
+  if (modalPrizeAdd) {
+    modalPrizeAdd.addEventListener("click", function () {
+      createPrizeModalRow("", "");
+    });
+  }
+  if (modalPrizeSave) {
+    modalPrizeSave.addEventListener("click", savePrizeModal);
+  }
+  if (modalPrizeCancel) {
+    modalPrizeCancel.addEventListener("click", closePrizeModal);
+  }
+  if (modalPrizePanel) {
+    modalPrizePanel.addEventListener("click", function (e) {
+      e.stopPropagation();
+    });
+  }
+  if (modalPrize) {
+    modalPrize.addEventListener("click", function (e) {
+      if (e.target === modalPrize) closePrizeModal();
+    });
+  }
+  if (modalPrizeTbody) {
+    ensurePrizeSortable();
+    modalPrizeTbody.addEventListener("input", function (e) {
+      var target = e.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      if (target.classList.contains("prize-row-amount")) {
+        target.value = formatAmountWithCommas(target.value);
+      }
+    });
+    modalPrizeTbody.addEventListener("click", function (e) {
+      var target = e.target;
+      if (!(target instanceof HTMLButtonElement)) return;
+      if (!target.classList.contains("btn-prize-row-remove")) return;
+      var row = target.closest("tr");
+      if (row) row.remove();
+      if (!modalPrizeTbody.querySelector("tr")) createPrizeModalRow("", "");
+    });
+  }
 
-  document.getElementById("btn-early-minus").addEventListener("click", function () {
-    remoteState.early = Math.max(0, (remoteState.early | 0) - 1);
-    document.getElementById("val-early").textContent = String(remoteState.early);
-    persistAll();
-  });
-  document.getElementById("btn-early-plus").addEventListener("click", function () {
-    remoteState.early = (remoteState.early | 0) + 1;
-    document.getElementById("val-early").textContent = String(remoteState.early);
-    persistAll();
-  });
   document.getElementById("btn-level-minus").addEventListener("click", function () {
-    remoteState.level = Math.max(1, (remoteState.level | 1) - 1);
+    var lv = Math.floor(Number(remoteState.level));
+    if (!Number.isFinite(lv) || lv < 1) lv = 1;
+    remoteState.level = Math.max(1, lv - 1);
     document.getElementById("val-level").textContent = String(remoteState.level);
     alignTimerToCurrentLevel();
     renderRemote();
   });
   document.getElementById("btn-level-plus").addEventListener("click", function () {
-    remoteState.level = (remoteState.level | 1) + 1;
+    var lv = Math.floor(Number(remoteState.level));
+    if (!Number.isFinite(lv) || lv < 1) lv = 1;
+    var sPeek = MetisTimer.readSyncState() || buildFullSync();
+    var lvls = MetisTimer.getActiveLevels(sPeek);
+    var maxStep = lvls && lvls.length ? lvls.length : 99999;
+    remoteState.level = Math.min(maxStep, lv + 1);
     document.getElementById("val-level").textContent = String(remoteState.level);
     alignTimerToCurrentLevel();
     renderRemote();
@@ -567,6 +1651,9 @@
 
   MetisTimer.subscribeSync(function () {
     if (!isSessionOk() || !screenRemote.classList.contains("is-active")) return;
+    MetisTimer.setSyncPresetId(getActivePresetId());
+    var s = MetisTimer.readSyncState();
+    if (s && s.updatedAt) lastRemoteSeenUpdated = s.updatedAt;
     remoteState = getRemote();
     renderRemote();
   });
@@ -577,6 +1664,7 @@
     renderRemote();
     renderPresets();
     persistAll();
+    syncLastSeenFromStore();
   } else {
     showScreen("auth");
     requestAnimationFrame(function () {
