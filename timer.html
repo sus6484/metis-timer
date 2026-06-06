@@ -677,6 +677,7 @@
       </div>
     </div>
 
+    <script src="metis-sheet-sync.js"></script>
     <script>
       (function () {
         function resolveFallbackId() {
@@ -700,32 +701,34 @@
           } catch (e) {}
           return "preset_default";
         }
-        var params = new URLSearchParams(window.location.search);
-        var id = params.get("id");
-        if (id) {
-          try {
-            var raw2 = localStorage.getItem("metis_blindPresets");
-            if (raw2) {
-              var arr2 = JSON.parse(raw2);
-              var known =
-                Array.isArray(arr2) &&
-                arr2.some(function (p) {
-                  return p && p.id === id;
-                });
-              if (!known) id = null;
+        function resolvePresetId() {
+          var params = new URLSearchParams(window.location.search);
+          var id = params.get("id");
+          if (id) {
+            try {
+              var raw2 = localStorage.getItem("metis_blindPresets");
+              if (raw2) {
+                var arr2 = JSON.parse(raw2);
+                var known =
+                  Array.isArray(arr2) &&
+                  arr2.some(function (p) {
+                    return p && p.id === id;
+                  });
+                if (!known) id = null;
+              }
+            } catch (e2) {
+              id = null;
             }
-          } catch (e2) {
-            id = null;
           }
+          if (!id) id = resolveFallbackId();
+          return id;
         }
-        if (!id) id = resolveFallbackId();
-        window.__METIS_TIMER_PRESET_ID = id;
+        MetisSheetSync.bootTimerPage(resolvePresetId);
       })();
     </script>
-    <script src="timer-core.js"></script>
-    <script src="metis-audio.js"></script>
     <script>
       (function () {
+        function runTimerPage() {
         window.__METIS_IS_TIMER_PAGE = true;
 
         function $(id) {
@@ -1846,6 +1849,10 @@
         window.addEventListener("pagehide", clearHb);
 
         tick();
+        }
+
+        if (window.__METIS_TIMER_BOOT_DONE) runTimerPage();
+        else window.addEventListener("metis-timer-boot-done", runTimerPage, { once: true });
       })();
     </script>
   </body>

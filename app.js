@@ -123,6 +123,9 @@
 
   function savePresets(list) {
     localStorage.setItem(STORAGE.PRESETS, JSON.stringify(list));
+    if (window.MetisSheetSync) {
+      MetisSheetSync.savePresetsToCloud(list, getActivePresetId());
+    }
   }
 
   /** 프리셋 객체에 함께 저장되는 대회·참가 정보 필드 */
@@ -427,6 +430,9 @@
 
   function setActivePresetId(id) {
     localStorage.setItem(STORAGE.ACTIVE_PRESET_ID, id);
+    if (window.MetisSheetSync) {
+      MetisSheetSync.savePresetsToCloud(getPresets(), id);
+    }
   }
 
   function uid() {
@@ -434,8 +440,7 @@
   }
 
   migrateLegacyTimerSync();
-  hydrateAllPresetTournaments();
-  var remoteState = getRemote();
+  var remoteState;
   var editingPresetId = null;
 
   function buildFullSync() {
@@ -1691,17 +1696,26 @@
     renderRemote();
   });
 
-  if (isSessionOk()) {
+  function startAppAfterCloudSync() {
+    hydrateAllPresetTournaments();
     remoteState = getRemote();
-    showScreen("remote");
-    renderRemote();
-    renderPresets();
-    persistAll();
-    syncLastSeenFromStore();
+    if (isSessionOk()) {
+      showScreen("remote");
+      renderRemote();
+      renderPresets();
+      persistAll();
+      syncLastSeenFromStore();
+    } else {
+      showScreen("auth");
+      requestAnimationFrame(function () {
+        if (pinInputs[0]) pinInputs[0].focus();
+      });
+    }
+  }
+
+  if (window.MetisSheetSync) {
+    MetisSheetSync.pullPresetsToLocal().finally(startAppAfterCloudSync);
   } else {
-    showScreen("auth");
-    requestAnimationFrame(function () {
-      if (pinInputs[0]) pinInputs[0].focus();
-    });
+    startAppAfterCloudSync();
   }
 })();
