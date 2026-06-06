@@ -594,7 +594,6 @@
                 controls
                 preload="metadata"
                 autoplay
-                muted
               ></video>
             </div>
             <div id="normal-stage-main" class="normal-stage-main">
@@ -877,8 +876,7 @@
           vid.dataset.metisSrc = next;
           vid.src = next;
           vid.load();
-          var p = vid.play();
-          if (p && typeof p.then === "function") p.catch(function () {});
+          playBreakVideo(vid);
         }
 
         function syncBreakUi(onBreak, breakRow, rem, timerRunning) {
@@ -909,8 +907,9 @@
 
             if (timerRunning) {
               if (!wasBreakUiActive || !breakLastTimerRun) {
-                var p = vid.play();
-                if (p && typeof p.then === "function") p.catch(function () {});
+                playBreakVideo(vid);
+              } else {
+                applyBreakVideoAudio(vid);
               }
             } else {
               try {
@@ -934,6 +933,14 @@
             } catch (e1) {}
             vid.dataset.metisSrc = "";
           }
+        }
+
+        function firstPlayLevelRow(levels) {
+          if (!levels || !levels.length) return null;
+          for (var i = 0; i < levels.length; i++) {
+            if (!MetisTimer.isBreakRow(levels[i])) return levels[i];
+          }
+          return null;
         }
 
         function playLevelsCountUpTo(levels, idxInclusive) {
@@ -1012,6 +1019,34 @@
           return true;
         }
 
+        /** REG CLOSE·NEXT BREAK는 본 타이머(레벨 진행) 중에만 카운트. 대기·시작 준비 bridge 중에는 정지 */
+        function shouldRunScheduleClocks(s, tn) {
+          if (!s || !tn) return false;
+          if (tn.bridge && (tn.bridge.kind === "preWait" || tn.bridge.kind === "startGo")) {
+            return false;
+          }
+          if (
+            s.pendingBridge &&
+            (s.pendingBridge.kind === "preWait" || s.pendingBridge.kind === "startGo")
+          ) {
+            return false;
+          }
+          return true;
+        }
+
+        /** 레벨 임의 이동 시 건너뛴 구간을 토탈에 반영. 시작 전·일시정지 wall time은 제외, 건너뛴 레벨 잔여·중간 구간은 포함 */
+        function creditSkippedLevelSeconds(fromIdx, toIdx, levels, remBeforeSkip, started) {
+          if (!started || !levels || !levels.length || toIdx <= fromIdx) return;
+          var credit = Math.max(0, Math.floor(Number(remBeforeSkip) || 0));
+          for (var k = fromIdx + 1; k < toIdx; k++) {
+            credit += MetisTimer.levelDurationSec(levels[k]);
+          }
+          if (credit > 0) {
+            totalSeconds += credit;
+            totalMsCarry = 0;
+          }
+        }
+
         function updateTotalTime(step, tn, levels, currentRow) {
           var now = typeof step.now === "number" ? step.now : Date.now();
           if (totalLastNow == null) totalLastNow = now;
@@ -1025,6 +1060,8 @@
             totalSeconds = 0;
             totalMsCarry = 0;
             totalLastNow = now;
+            lastTrackedScheduleIdx = null;
+            lastTrackedRem = 0;
             return;
           }
 
@@ -1095,7 +1132,7 @@
           return secondsUntilScheduleRowEnd(levels, scheduleIndex, remSec, deadlineIdx);
         }
 
-        function applyRegCloseDisplay(el, s, levels, idxSchedule, rem, now) {
+        function applyRegCloseDisplay(el, s, levels, idxSchedule, rem, now, active) {
           if (!el) return;
           var cacheId = el.id || "el-m-regclose";
           var preset = getActivePresetFromState(s);
@@ -1105,7 +1142,7 @@
               : 0;
           var nextText = "—";
           var placeholder = true;
-          if (pl >= 1 && levels && levels.length) {
+          if (active !== false && pl >= 1 && levels && levels.length) {
             var sec = secondsUntilRegCloseBeforeNthPlayLevel(levels, idxSchedule, rem, pl);
             if (sec == null) {
               nextText = "—";
@@ -1128,13 +1165,16 @@
         var totalSeconds = 0;
         var totalMsCarry = 0;
         var totalLastNow = null;
-        var transitionVoiceDone = false;
+        var lastTrackedScheduleIdx = null;
+        var lastTrackedRem = 0;
+        var suppressSkipCreditOnce = false;
         var transitionTickMarks = {};
         var bridgeTickMarks = {};
         var audioUnlockBound = false;
+        var lastActiveBridgeKind = null;
+        var lastDoorongAt = 0;
 
         function resetTransitionCues() {
-          transitionVoiceDone = false;
           transitionTickMarks = {};
         }
 
@@ -1144,29 +1184,65 @@
           return prevSec > threshold && curSec <= threshold;
         }
 
-        function runBridgeTicks(step, prevBridgeSec, curBridgeSec) {
-          var br = step.state.timer && step.state.timer.bridge;
-          if (!br || typeof MetisAudio === "undefined") return;
-          if (!bridgeTickMarks["s-5"] && crossedThreshold(prevBridgeSec, curBridgeSec, 5)) {
-            bridgeTickMarks["s-5"] = true;
-            MetisAudio.ensureCtx();
-            MetisAudio.speakGameStart();
+        /** 6초 전 음성 → 3·2·1초 띵 (공통 시퀀스) */
+        function runTransitionCues(prevSec, curSec, markStore, idPrefix, config) {
+          if (curSec == null || typeof MetisAudio === "undefined") return;
+          MetisAudio.unlock();
+          var voiceAt = config.voiceAt;
+          if (voiceAt != null && typeof config.speak === "function") {
+            var vKey = idPrefix + "-voice";
+            if (!markStore[vKey] && crossedThreshold(prevSec, curSec, voiceAt)) {
+              markStore[vKey] = true;
+              MetisAudio.ensureCtx();
+              config.speak();
+            }
           }
-          for (var sec = 3; sec >= 1; sec--) {
-            var bk = "b-" + sec;
-            if (!bridgeTickMarks[bk] && crossedThreshold(prevBridgeSec, curBridgeSec, sec)) {
-              bridgeTickMarks[bk] = true;
+          var tickHi = config.tickHi != null ? config.tickHi : 3;
+          var tickLo = config.tickLo != null ? config.tickLo : 1;
+          for (var t = tickHi; t >= tickLo; t--) {
+            var tKey = idPrefix + "-t" + t;
+            if (!markStore[tKey] && crossedThreshold(prevSec, curSec, t)) {
+              markStore[tKey] = true;
               MetisAudio.ensureCtx();
               MetisAudio.playTick();
             }
           }
         }
 
+        function playTransitionDoorong() {
+          if (typeof MetisAudio === "undefined") return;
+          var nowMs = Date.now();
+          if (nowMs - lastDoorongAt < 800) return;
+          lastDoorongAt = nowMs;
+          MetisAudio.unlock();
+          MetisAudio.ensureCtx();
+          MetisAudio.playDoorong();
+        }
+
+        function runBridgeTicks(step, prevBridgeSec, curBridgeSec) {
+          var br = step.state.timer && step.state.timer.bridge;
+          if (!br || typeof MetisAudio === "undefined") return;
+          if (br.kind === "preWait") {
+            runTransitionCues(prevBridgeSec, curBridgeSec, bridgeTickMarks, "pw", {
+              voiceAt: 6,
+              speak: function () {
+                MetisAudio.speakGameStart();
+              },
+              tickHi: 3,
+              tickLo: 1,
+            });
+          } else if (br.kind === "startGo") {
+            runTransitionCues(prevBridgeSec, curBridgeSec, bridgeTickMarks, "sg", {
+              tickHi: 3,
+              tickLo: 1,
+            });
+          }
+        }
+
         function runBlindsUpSequence(step, prevLevelSec, curLevelSec) {
           var s = step.state;
           var t = MetisTimer.normalizeTimer(s.timer || {}, s);
-          if (t.bridge || !t.isRunning || typeof MetisAudio === "undefined")
-            return;
+          if (t.bridge || !t.isRunning || typeof MetisAudio === "undefined") return;
           var levels = MetisTimer.getActiveLevels(s);
           if (!levels) return;
           var idx = t.levelIndex;
@@ -1175,24 +1251,16 @@
           if (!L || MetisTimer.isBreakRow(L)) return;
           if (!NL) return;
           var toBreak = MetisTimer.isBreakRow(NL);
-          var voiceThreshold = toBreak ? 5 : 6;
-          var voiceKey = "v-" + idx + "-" + (toBreak ? "break" : "level");
-
-          if (!transitionTickMarks[voiceKey] && crossedThreshold(prevLevelSec, curLevelSec, voiceThreshold)) {
-            transitionTickMarks[voiceKey] = true;
-            MetisAudio.ensureCtx();
-            if (toBreak) MetisAudio.speakBreakTime();
-            else MetisAudio.speakNextLevelBlindsUp();
-          }
-
-          for (var sec = 3; sec >= 1; sec--) {
-            var key = (toBreak ? "br-" : "lv-") + idx + "-" + sec;
-            if (!transitionTickMarks[key] && crossedThreshold(prevLevelSec, curLevelSec, sec)) {
-              transitionTickMarks[key] = true;
-              MetisAudio.ensureCtx();
-              MetisAudio.playTick();
-            }
-          }
+          var prefix = (toBreak ? "br-" : "lv-") + idx;
+          runTransitionCues(prevLevelSec, curLevelSec, transitionTickMarks, prefix, {
+            voiceAt: 6,
+            speak: function () {
+              if (toBreak) MetisAudio.speakBreakTime();
+              else MetisAudio.speakNextLevelBlindsUp();
+            },
+            tickHi: 3,
+            tickLo: 1,
+          });
         }
 
         function renderView(step) {
@@ -1202,7 +1270,22 @@
 
           textIf("el-clock", MetisTimer.formatMMSS(rem));
           textIf("el-title", s.tournamentName || "토너먼트");
-          textIf("el-status", s.timerStatus || "대기중");
+
+          var levels = MetisTimer.getActiveLevels(s);
+          var tn = MetisTimer.normalizeTimer(s.timer || {}, s);
+          var inPreWait =
+            !!(tn.bridge && tn.bridge.kind === "preWait") ||
+            !!(s.pendingBridge && s.pendingBridge.kind === "preWait");
+
+          var statusEl = $("el-status");
+          if (statusEl && lastUi["el-status:hidden"] !== inPreWait) {
+            lastUi["el-status:hidden"] = inPreWait;
+            statusEl.hidden = inPreWait;
+          }
+          if (!inPreWait) {
+            textIf("el-status", s.timerStatus || "대기중");
+          }
+
           var paused = (s.timerStatus || "") === "일시정지";
           var ov = $("pause-overlay");
           if (ov && lastPausedOverlay !== paused) {
@@ -1216,14 +1299,15 @@
           var info = (s.tournamentInfo && String(s.tournamentInfo).trim()) || "";
           textIf("el-tourney-info", info ? info : "—");
 
-          var levels = MetisTimer.getActiveLevels(s);
-          var tn = MetisTimer.normalizeTimer(s.timer || {}, s);
           var maxLi = levels && levels.length ? levels.length - 1 : 0;
           var li = Math.max(0, Math.min(tn.levelIndex, maxLi));
           var L = levels && levels[li];
           var NL = levels && levels[li + 1];
 
-          if (L) {
+          if (inPreWait) {
+            textIf("el-level", "대기중");
+            htmlIf("el-blinds", "");
+          } else if (L) {
             if (MetisTimer.isBreakRow(L)) {
               textIf("el-level", "BREAK TIME");
               htmlIf("el-blinds", "");
@@ -1244,7 +1328,32 @@
             textIf("el-blinds", "프리셋을 선택해 주세요.");
           }
 
-          if (NL) {
+          var preGameNextPreview =
+            inPreWait ||
+            !!(tn.bridge && tn.bridge.kind === "startGo") ||
+            !!(
+              s.pendingBridge &&
+              (s.pendingBridge.kind === "preWait" || s.pendingBridge.kind === "startGo")
+            ) ||
+            !s.hasStartedOnce;
+
+          if (preGameNextPreview && levels && levels.length) {
+            var fpRow = firstPlayLevelRow(levels);
+            if (fpRow) {
+              htmlIf(
+                "el-next",
+                "<strong>NEXT LEVEL 1</strong> — " +
+                  fpRow.sb +
+                  "/" +
+                  fpRow.bb +
+                  " (" +
+                  (fpRow.ante != null ? fpRow.ante : 0) +
+                  ")"
+              );
+            } else {
+              htmlIf("el-next", "");
+            }
+          } else if (NL) {
             if (MetisTimer.isBreakRow(NL)) {
               var bm = Number(NL.minutes);
               if (!Number.isFinite(bm)) bm = 0;
@@ -1273,10 +1382,31 @@
           var pl = s.player != null ? s.player : 0;
           var en = s.entry != null ? s.entry : 0;
           textIf("el-m-players", pl + " / " + en);
+          var idxSchedule = tn.levelIndex;
+          if (
+            lastTrackedScheduleIdx != null &&
+            idxSchedule !== lastTrackedScheduleIdx &&
+            !suppressSkipCreditOnce &&
+            idxSchedule > lastTrackedScheduleIdx
+          ) {
+            creditSkippedLevelSeconds(
+              lastTrackedScheduleIdx,
+              idxSchedule,
+              levels,
+              lastTrackedRem,
+              !!s.hasStartedOnce
+            );
+          }
+          suppressSkipCreditOnce = false;
           updateTotalTime(step, tn, levels, L);
           textIf("el-m-totaltime", formatDurationHMS(totalSeconds));
-          var idxSchedule = tn.levelIndex;
-          applyRegCloseDisplay($("el-m-regclose"), s, levels, idxSchedule, rem, tNow);
+          lastTrackedScheduleIdx = idxSchedule;
+          lastTrackedRem = rem;
+          if (shouldRunScheduleClocks(s, tn)) {
+            applyRegCloseDisplay($("el-m-regclose"), s, levels, idxSchedule, rem, tNow, true);
+          } else {
+            applyRegCloseDisplay($("el-m-regclose"), s, levels, idxSchedule, rem, tNow, false);
+          }
           var totalStack =
             Math.max(0, Math.floor(Number(en) || 0)) *
             Math.max(0, Math.floor(Number(s.entryChips) || 0));
@@ -1284,7 +1414,10 @@
           var avgStack = pl > 0 ? Math.floor(totalStack / pl) : 0;
           htmlIf("el-m-avg", formatAvgBbText(avgStack, L));
 
-          var secToBreak = secondsUntilNextBreakRow(levels, idxSchedule, rem);
+          var scheduleClocksOn = shouldRunScheduleClocks(s, tn);
+          var secToBreak = scheduleClocksOn
+            ? secondsUntilNextBreakRow(levels, idxSchedule, rem)
+            : null;
           var elNb = $("el-m-nextbreak");
           if (elNb) {
             var nbKey = "el-m-nextbreak";
@@ -1343,33 +1476,44 @@
           var brActive = !!(step.state.timer && step.state.timer.bridge);
           if (!brActive) {
             bridgeTickMarks = {};
-            prevBridgeSecExact = null;
           }
 
           if (step.bridgeCompleted && typeof MetisAudio !== "undefined") {
             bridgeTickMarks = {};
-            MetisAudio.ensureCtx();
-            MetisAudio.playDoorong();
+            playTransitionDoorong();
           }
 
+          var curBridgeKind =
+            step.state.timer && step.state.timer.bridge
+              ? step.state.timer.bridge.kind
+              : null;
+          if (
+            (lastActiveBridgeKind === "preWait" || lastActiveBridgeKind === "startGo") &&
+            !curBridgeKind &&
+            step.state.timer &&
+            step.state.timer.isRunning &&
+            (step.state.timerStatus || "") === "진행중" &&
+            !step.bridgeCompleted
+          ) {
+            playTransitionDoorong();
+          }
+          lastActiveBridgeKind = curBridgeKind;
+
           if (step.leveledUp) {
+            suppressSkipCreditOnce = true;
             resetTransitionCues();
-            if (typeof MetisAudio !== "undefined") {
-              var lvAfter = MetisTimer.getActiveLevels(step.state);
-              var tnAfter = MetisTimer.normalizeTimer(step.state.timer || {}, step.state);
-              var curAfter = lvAfter && lvAfter[tnAfter.levelIndex];
-              if (curAfter && !MetisTimer.isBreakRow(curAfter)) {
-                MetisAudio.ensureCtx();
-                MetisAudio.playDoorong();
-              }
-            }
+            playTransitionDoorong();
             prevLevelSecExact = null;
           }
 
           runBridgeTicks(step, prevBridge, curBridgeSec);
           runBlindsUpSequence(step, prevLevel, curLevelSec);
 
-          prevBridgeSecExact = curBridgeSec;
+          if (brActive) {
+            prevBridgeSecExact = curBridgeSec;
+          } else {
+            prevBridgeSecExact = null;
+          }
           prevLevelSecExact = curLevelSec;
           renderView(step);
         }
@@ -1385,6 +1529,10 @@
         function togglePauseResume() {
           var s = MetisTimer.readSyncState();
           if (!s) return;
+          if (typeof MetisAudio !== "undefined") {
+            MetisAudio.unlock();
+            if (MetisAudio.resumeCtx) MetisAudio.resumeCtx();
+          }
           var t = MetisTimer.normalizeTimer(s.timer, s);
           if (t.isRunning || t.bridge) {
             MetisTimer.applyPause(s, Date.now());
@@ -1410,6 +1558,40 @@
         var quickHoverBottom = false;
         var quickHoverPanel = false;
         var QUICK_VOL_KEY = "metis_quick_master_volume";
+        var MIN_QUICK_VOLUME = 0.35;
+        var DEFAULT_QUICK_VOLUME = 1;
+
+        function normalizeQuickVolume(raw) {
+          var n = Number(raw);
+          if (!Number.isFinite(n) || n <= 0) return DEFAULT_QUICK_VOLUME;
+          return Math.max(MIN_QUICK_VOLUME, Math.min(1, n));
+        }
+
+        function applyBreakVideoAudio(vid) {
+          if (!vid) return;
+          var master = normalizeQuickVolume(getQuickMasterVolume());
+          vid.muted = false;
+          vid.volume = Math.max(0.4, Math.min(1, 0.65 * master));
+        }
+
+        function playBreakVideo(vid) {
+          if (!vid) return;
+          applyBreakVideoAudio(vid);
+          var p = vid.play();
+          if (p && typeof p.then === "function") {
+            p.then(function () {
+              applyBreakVideoAudio(vid);
+            }).catch(function () {
+              vid.muted = true;
+              var p2 = vid.play();
+              if (p2 && typeof p2.then === "function") {
+                p2.then(function () {
+                  applyBreakVideoAudio(vid);
+                }).catch(function () {});
+              }
+            });
+          }
+        }
 
         function refreshQuickPanelVisibility() {
           if (!quickPanel) return;
@@ -1417,7 +1599,7 @@
         }
 
         function setQuickMasterVolume(v) {
-          var val = Math.max(0, Math.min(1, Number(v) || 0));
+          var val = normalizeQuickVolume(v);
           if (typeof MetisAudio !== "undefined" && MetisAudio.setMasterVolume) {
             MetisAudio.setMasterVolume(val);
           }
@@ -1425,7 +1607,7 @@
             localStorage.setItem(QUICK_VOL_KEY, String(val));
           } catch (e) {}
           var bv = $("break-video");
-          if (bv) bv.volume = Math.max(0, Math.min(1, 0.55 * val));
+          if (bv) applyBreakVideoAudio(bv);
         }
 
         function getQuickMasterVolume() {
@@ -1436,10 +1618,13 @@
         }
 
         function loadQuickVolume() {
-          var init = 1;
+          var init = DEFAULT_QUICK_VOLUME;
           try {
-            var raw = Number(localStorage.getItem(QUICK_VOL_KEY));
-            if (Number.isFinite(raw)) init = raw;
+            var raw = localStorage.getItem(QUICK_VOL_KEY);
+            init = normalizeQuickVolume(raw);
+            if (raw === "0" || Number(raw) <= 0) {
+              localStorage.setItem(QUICK_VOL_KEY, String(init));
+            }
           } catch (e) {}
           setQuickMasterVolume(init);
         }
@@ -1507,6 +1692,10 @@
 
         function quickStart() {
           mutateSync(function (s, now) {
+            if (typeof MetisAudio !== "undefined") {
+              MetisAudio.unlock();
+              if (MetisAudio.resumeCtx) MetisAudio.resumeCtx();
+            }
             var t = MetisTimer.normalizeTimer(s.timer || {}, s);
             s.timer = t;
             if (s.pendingBridge) {
@@ -1570,7 +1759,10 @@
         }
 
         function handleQuickAction(action) {
-          if (typeof MetisAudio !== "undefined") MetisAudio.unlock();
+          if (typeof MetisAudio !== "undefined") {
+            MetisAudio.unlock();
+            if (MetisAudio.resumeCtx) MetisAudio.resumeCtx();
+          }
           quickFeedback();
           if (action === "vol-plus") return setQuickMasterVolume(getQuickMasterVolume() + 0.1);
           if (action === "vol-minus") return setQuickMasterVolume(getQuickMasterVolume() - 0.1);
@@ -1594,15 +1786,15 @@
           audioUnlockBound = true;
           function onceUnlock() {
             MetisAudio.unlock();
-            window.removeEventListener("pointerdown", onceUnlock, true);
-            window.removeEventListener("keydown", onceUnlock, true);
-            window.removeEventListener("touchstart", onceUnlock, true);
+            if (MetisAudio.resumeCtx) MetisAudio.resumeCtx();
           }
           window.addEventListener("pointerdown", onceUnlock, true);
           window.addEventListener("keydown", onceUnlock, true);
           window.addEventListener("touchstart", onceUnlock, true);
+          window.addEventListener("click", onceUnlock, true);
         }
         bindAudioUnlockOnce();
+        if (typeof MetisAudio !== "undefined") MetisAudio.unlock();
         loadQuickVolume();
         refreshQuickPanelVisibility();
         window.addEventListener("mousemove", function (e) {

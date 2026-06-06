@@ -232,6 +232,18 @@
           step="1"
           placeholder="비우면 REG CLOSE 미표시"
         />
+        <label for="modal-pre-wait-minutes">대기 (분)</label>
+        <p class="modal-field-hint">
+          게임 시작 전 대기 타이머입니다. 시작 버튼을 누르면 입력한 시간만큼 카운트다운한 뒤 본 타이머(레벨 1)가 시작됩니다. 비우면 대기 없이 바로 시작 준비(3초) 후 진행됩니다.
+        </p>
+        <input
+          id="modal-pre-wait-minutes"
+          type="number"
+          min="1"
+          max="999"
+          step="1"
+          placeholder="비우면 대기 없음"
+        />
         <label class="modal-levels-label">블라인드 · 브레이크 순서</label>
         <div class="modal-level-toolbar">
           <div class="modal-level-toolbar-left">
