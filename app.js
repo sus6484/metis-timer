@@ -341,6 +341,46 @@
     return { error: "Metis 프리셋 파일이 아니거나 형식이 맞지 않습니다." };
   }
 
+  function downloadBlobAsFile(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function saveBlobWithPicker(blob, filename) {
+    if (typeof window.showSaveFilePicker !== "function") {
+      downloadBlobAsFile(blob, filename);
+      return Promise.resolve();
+    }
+    return window
+      .showSaveFilePicker({
+        suggestedName: filename,
+        types: [
+          {
+            description: "Metis 프리셋",
+            accept: { "application/json": [".json"] },
+          },
+        ],
+      })
+      .then(function (handle) {
+        return handle.createWritable().then(function (writable) {
+          return writable.write(blob).then(function () {
+            return writable.close();
+          });
+        });
+      })
+      .catch(function (err) {
+        if (err && err.name === "AbortError") return;
+        downloadBlobAsFile(blob, filename);
+      });
+  }
+
   function exportSelectedPresetToFile() {
     var id = presetSelect.value;
     if (!id) {
@@ -364,16 +404,9 @@
     wrap.exportedAt = new Date().toISOString();
     wrap.preset = payload;
     var json = JSON.stringify(wrap, null, 2);
+    var filename = "metis-preset-" + slugForFilename(payload.name) + ".json";
     var blob = new Blob([json], { type: "application/json;charset=utf-8" });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = url;
-    a.download = "metis-preset-" + slugForFilename(payload.name) + ".json";
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    saveBlobWithPicker(blob, filename);
   }
 
   function applyImportedPreset(preset) {
