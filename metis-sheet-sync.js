@@ -40,6 +40,9 @@
       })
       .then(function (data) {
         applyToLocal(data);
+        if (global.MetisTimer && global.MetisTimer.syncAllPresetsMetadataFromStorage) {
+          global.MetisTimer.syncAllPresetsMetadataFromStorage();
+        }
         return data;
       })
       .catch(function (err) {
@@ -111,6 +114,9 @@
         return loadScript("timer-core.js");
       })
       .then(function () {
+        if (window.MetisTimer && window.MetisTimer.syncAllPresetsMetadataFromStorage) {
+          window.MetisTimer.syncAllPresetsMetadataFromStorage();
+        }
         return loadScript("metis-audio.js");
       })
       .then(function () {

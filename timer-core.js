@@ -132,6 +132,65 @@
     savePresetsToStorage(presets);
   }
 
+  /** 클라우드 프리셋 → 로컬 timer_state_* (대회정보·상금 등 메타데이터) */
+  function copyPresetMetadataIntoState(state, preset) {
+    if (!state || !preset) return state;
+    for (var j = 0; j < PRESET_EMBED_KEYS.length; j++) {
+      var key = PRESET_EMBED_KEYS[j];
+      if (preset[key] === undefined) continue;
+      if (key === "prizeItems" && Array.isArray(preset[key])) {
+        state[key] = preset[key].slice();
+      } else {
+        state[key] = preset[key];
+      }
+    }
+    return state;
+  }
+
+  function syncAllPresetsMetadataFromStorage() {
+    var presets = loadPresetsFromStorage();
+    if (!presets.length) return;
+    var savedSyncId = syncPresetId;
+    var savedActive = "";
+    try {
+      savedActive = localStorage.getItem("metis_activePresetId") || "";
+    } catch (e0) {}
+
+    for (var i = 0; i < presets.length; i++) {
+      var p = presets[i];
+      if (!p || !p.id) continue;
+      setSyncPresetId(p.id);
+      try {
+        var raw = localStorage.getItem(getSyncStorageKey());
+        var state = null;
+        if (raw) {
+          state = JSON.parse(raw);
+          delete state.rebuy;
+          delete state.addon;
+          delete state.rebuyChips;
+          delete state.addonChips;
+          delete state.early;
+          delete state.earlyChips;
+          mergePresetsIntoState(state);
+          state.timer = normalizeTimer(state.timer, state);
+          ensureTotalSecondsState(state);
+          syncLevelField(state);
+        } else {
+          state = buildInitialTimerState();
+        }
+        if (!state) continue;
+        copyPresetMetadataIntoState(state, p);
+        state.updatedAt = Date.now();
+        localStorage.setItem(getSyncStorageKey(), JSON.stringify(state));
+        if (p.id === savedActive || p.id === savedSyncId) {
+          mirrorRemoteStorage(state);
+        }
+      } catch (e1) {}
+    }
+
+    setSyncPresetId(savedSyncId || savedActive);
+  }
+
   reconnectBroadcastChannel();
 
   function defaultTimer() {
@@ -728,5 +787,6 @@
     getTotalSeconds: getTotalSeconds,
     engineStep: engineStep,
     pickRemoteSlice: pickRemoteSlice,
+    syncAllPresetsMetadataFromStorage: syncAllPresetsMetadataFromStorage,
   };
 })(typeof window !== "undefined" ? window : this);

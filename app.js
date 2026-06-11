@@ -102,6 +102,7 @@
     var s = MetisTimer.readSyncState();
     if (s) {
       r = Object.assign({}, defaultRemote(), embedded, MetisTimer.pickRemoteSlice(s));
+      applyPresetMetadataOverSync(r, embedded);
     } else {
       var data = loadJson(STORAGE.REMOTE, function () {
         return {};
@@ -144,6 +145,31 @@
     "infoFontScale",
     "prizeFontScale",
   ];
+
+  /** 구글 시트 프리셋에 저장·동기화되는 메타데이터 (인원 등 실시간 값 제외) */
+  var PRESET_METADATA_KEYS = [
+    "tournamentName",
+    "totalPrizeText",
+    "tournamentInfo",
+    "prizeText",
+    "prizeItems",
+    "infoFontScale",
+    "prizeFontScale",
+  ];
+
+  function applyPresetMetadataOverSync(target, embedded) {
+    if (!target || !embedded) return target;
+    for (var i = 0; i < PRESET_METADATA_KEYS.length; i++) {
+      var k = PRESET_METADATA_KEYS[i];
+      if (embedded[k] === undefined) continue;
+      if (k === "prizeItems" && Array.isArray(embedded[k])) {
+        target[k] = embedded[k].slice();
+      } else {
+        target[k] = embedded[k];
+      }
+    }
+    return target;
+  }
 
   function migrateLegacyTimerSync() {
     try {
@@ -1859,6 +1885,9 @@
 
   function startAppAfterCloudSync() {
     hydrateAllPresetTournaments();
+    if (MetisTimer.syncAllPresetsMetadataFromStorage) {
+      MetisTimer.syncAllPresetsMetadataFromStorage();
+    }
     remoteState = getRemote();
     if (isSessionOk()) {
       showScreen("remote");
