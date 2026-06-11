@@ -1577,13 +1577,7 @@
               var ctx = new (window.AudioContext || window.webkitAudioContext)();
               ctx.resume().catch(function () {});
             } catch (e) {}
-            if (s.pendingBridge) {
-              MetisTimer.applyStartSequence(s, Date.now());
-            } else if (s.timerStatus === "일시정지") {
-              MetisTimer.applyResume(s, Date.now());
-            } else {
-              MetisTimer.applyStartSequence(s, Date.now());
-            }
+            MetisTimer.applyStartOrResume(s, Date.now());
           }
           MetisTimer.writeSyncState(s);
           tick();
@@ -1705,24 +1699,7 @@
 
         function adjustLevel(delta) {
           mutateSync(function (s, now) {
-            var levels = MetisTimer.getActiveLevels(s);
-            if (!levels || !levels.length) return;
-            var t = MetisTimer.normalizeTimer(s.timer || {}, s);
-            s.timer = t;
-            var nextIdx = Math.max(0, Math.min(levels.length - 1, t.levelIndex + delta));
-            t.levelIndex = nextIdx;
-            var dur = MetisTimer.levelDurationSec(levels[nextIdx]);
-            if (t.isRunning) {
-              t.endAt = now + dur * 1000;
-              t.pausedRemainingSec = dur;
-            } else {
-              t.endAt = null;
-              t.pausedRemainingSec = dur;
-            }
-            t.bridge = null;
-            s.pendingBridge = null;
-            MetisTimer.syncLevelField(s);
-            s.displayTime = MetisTimer.formatMMSS(dur);
+            MetisTimer.applyScheduleLevelDelta(s, now, delta);
           });
         }
 
@@ -1732,15 +1709,7 @@
               MetisAudio.unlock();
               if (MetisAudio.resumeCtx) MetisAudio.resumeCtx();
             }
-            var t = MetisTimer.normalizeTimer(s.timer || {}, s);
-            s.timer = t;
-            if (s.pendingBridge) {
-              MetisTimer.applyStartSequence(s, now);
-            } else if (s.timerStatus === "일시정지") {
-              MetisTimer.applyResume(s, now);
-            } else {
-              MetisTimer.applyStartSequence(s, now);
-            }
+            MetisTimer.applyStartOrResume(s, now);
           });
         }
 

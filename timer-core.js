@@ -634,6 +634,10 @@
       state.pendingBridge = null;
     }
     syncLevelField(state);
+    if (state.hasStartedOnce || t.levelIndex > 0) {
+      return applyResume(state, now);
+    }
+
     var dur = levelDurationSec(levels[t.levelIndex]);
     var rem = Math.max(0, Math.floor(t.pausedRemainingSec || 0));
     if (rem <= 0) rem = dur;
@@ -648,8 +652,7 @@
       if (!Number.isFinite(wm) || wm < 0) wm = 0;
       wm = Math.min(999, wm);
     }
-    var canUseReadyTimer = !state.hasStartedOnce && t.levelIndex === 0;
-    if (wm > 0 && canUseReadyTimer) {
+    if (wm > 0) {
       t.bridge = { kind: "preWait", until: now + wm * 60 * 1000 };
       state.timerStatus = "대기 타이머";
     } else {
@@ -695,6 +698,95 @@
     t.endAt = null;
     state.timerStatus = "일시정지";
     state.displayTime = formatMMSS(rem);
+    return state;
+  }
+
+  function isPreGameBridge(state, timer) {
+    var t = timer;
+    if (
+      t &&
+      t.bridge &&
+      (t.bridge.kind === "preWait" || t.bridge.kind === "startGo")
+    ) {
+      return true;
+    }
+    var pb = state && state.pendingBridge;
+    return !!(
+      pb &&
+      (pb.kind === "preWait" || pb.kind === "startGo")
+    );
+  }
+
+  function pauseStalePreGameStatus(state) {
+    if (
+      state.timerStatus === "대기 타이머" ||
+      state.timerStatus === "시작 준비"
+    ) {
+      state.timerStatus = "일시정지";
+    }
+  }
+
+  /** 대기 타이머 종료 후 레벨 수동 조정 등으로 bridge 없이 멈춘 경우 START는 재개 */
+  function shouldResumeInsteadOfStart(state, timer) {
+    var t = normalizeTimer(timer, state);
+    if (state.hasStartedOnce) return true;
+    if (t.levelIndex > 0) return true;
+    if (state.timerStatus === "일시정지") return true;
+    return (
+      (state.timerStatus === "대기 타이머" || state.timerStatus === "시작 준비") &&
+      !t.bridge &&
+      !isPreGameBridge(state, t)
+    );
+  }
+
+  function applyStartOrResume(state, now) {
+    var t = normalizeTimer(state.timer, state);
+    state.timer = t;
+    if (t.isRunning || t.bridge) return state;
+    if (state.pendingBridge) return applyStartSequence(state, now);
+    if (shouldResumeInsteadOfStart(state, t)) return applyResume(state, now);
+    return applyStartSequence(state, now);
+  }
+
+  /**
+   * 레벨 ± 조정. 대기 타이머·시작 준비 중 LEVEL+는 현재(1)레벨을 바로 시작한다.
+   */
+  function applyScheduleLevelDelta(state, now, delta) {
+    var levels = getActiveLevels(state);
+    if (!levels || !levels.length) return state;
+    var t = normalizeTimer(state.timer, state);
+    state.timer = t;
+
+    if (isPreGameBridge(state, t)) {
+      if (delta < 0) return state;
+      t.bridge = null;
+      state.pendingBridge = null;
+      return applyResume(state, now);
+    }
+
+    var nextIdx = clamp(t.levelIndex + delta, 0, levels.length - 1);
+    t.levelIndex = nextIdx;
+    var dur = levelDurationSec(levels[nextIdx]);
+    t.bridge = null;
+    state.pendingBridge = null;
+    if (t.isRunning) {
+      t.endAt = now + dur * 1000;
+      t.pausedRemainingSec = dur;
+      state.timerStatus = "진행중";
+    } else {
+      t.endAt = null;
+      t.pausedRemainingSec = dur;
+      pauseStalePreGameStatus(state);
+      if (
+        state.timerStatus !== "종료" &&
+        state.timerStatus !== "일시정지" &&
+        state.timerStatus !== "대기중"
+      ) {
+        state.timerStatus = "일시정지";
+      }
+    }
+    syncLevelField(state);
+    state.displayTime = formatMMSS(remainingSec(state, now));
     return state;
   }
 
@@ -873,6 +965,10 @@
     applyResume: applyResume,
     applyStartSequence: applyStartSequence,
     applyLevelRefresh: applyLevelRefresh,
+    applyScheduleLevelDelta: applyScheduleLevelDelta,
+    isPreGameBridge: isPreGameBridge,
+    shouldResumeInsteadOfStart: shouldResumeInsteadOfStart,
+    applyStartOrResume: applyStartOrResume,
     applyPause: applyPause,
     tickExpire: tickExpire,
     shouldOwnEngine: shouldOwnEngine,

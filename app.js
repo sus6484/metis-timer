@@ -570,23 +570,45 @@
       persistAll();
       return;
     }
-    var idx = Math.max(0, (parseInt(remoteState.level, 10) || 1) - 1);
-    idx = Math.min(idx, levels.length - 1);
+    var now = Date.now();
+    var targetIdx = Math.max(0, (parseInt(remoteState.level, 10) || 1) - 1);
+    targetIdx = Math.min(targetIdx, levels.length - 1);
     s.timer = MetisTimer.normalizeTimer(s.timer || {}, s);
-    s.timer.bridge = null;
-    s.timer.levelIndex = idx;
-    MetisTimer.syncLevelField(s);
-    var dur = MetisTimer.levelDurationSec(levels[s.timer.levelIndex]);
-    if (s.timer.isRunning) {
-      s.timer.endAt = Date.now() + dur * 1000;
-      s.timer.pausedRemainingSec = dur;
+    if (
+      MetisTimer.isPreGameBridge(s, s.timer) &&
+      targetIdx > s.timer.levelIndex
+    ) {
+      MetisTimer.applyResume(s, now);
     } else {
-      s.timer.pausedRemainingSec = dur;
-      s.timer.endAt = null;
+      s.timer.bridge = null;
+      s.pendingBridge = null;
+      s.timer.levelIndex = targetIdx;
+      MetisTimer.syncLevelField(s);
+      var dur = MetisTimer.levelDurationSec(levels[s.timer.levelIndex]);
+      if (s.timer.isRunning) {
+        s.timer.endAt = now + dur * 1000;
+        s.timer.pausedRemainingSec = dur;
+        s.timerStatus = "진행중";
+      } else {
+        s.timer.pausedRemainingSec = dur;
+        s.timer.endAt = null;
+        if (
+          s.timerStatus === "대기 타이머" ||
+          s.timerStatus === "시작 준비"
+        ) {
+          s.timerStatus = "일시정지";
+        } else if (
+          s.timerStatus !== "종료" &&
+          s.timerStatus !== "일시정지" &&
+          s.timerStatus !== "대기중"
+        ) {
+          s.timerStatus = "일시정지";
+        }
+      }
+      s.displayTime = MetisTimer.formatMMSS(
+        MetisTimer.remainingSec(s, now)
+      );
     }
-    s.displayTime = MetisTimer.formatMMSS(
-      MetisTimer.remainingSec(s, Date.now())
-    );
     MetisTimer.writeSyncState(s);
     applySyncToRemoteState(s);
   }
@@ -1674,13 +1696,7 @@
       renderRemote();
       return;
     }
-    if (s.pendingBridge) {
-      MetisTimer.applyStartSequence(s, Date.now());
-    } else if (s.timerStatus === "일시정지") {
-      MetisTimer.applyResume(s, Date.now());
-    } else {
-      MetisTimer.applyStartSequence(s, Date.now());
-    }
+    MetisTimer.applyStartOrResume(s, Date.now());
     MetisTimer.writeSyncState(s);
     applySyncToRemoteState(s);
     renderRemote();
