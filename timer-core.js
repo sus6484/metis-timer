@@ -62,6 +62,7 @@
     "regCloseLevel",
     "infoFontScale",
     "prizeFontScale",
+    "leftPanelRotate",
     "leftFontScale",
   ];
 
@@ -74,6 +75,7 @@
     "prizeItems",
     "infoFontScale",
     "prizeFontScale",
+    "leftPanelRotate",
   ];
 
   function isPresetMetadataEmpty(key, val) {
@@ -156,6 +158,7 @@
       regCloseLevel: 15,
       infoFontScale: 1,
       prizeFontScale: 1,
+      leftPanelRotate: false,
     };
   }
 
@@ -193,6 +196,33 @@
     savePresetsToStorage(presets);
   }
 
+  function shouldApplyMetadataField(key, presetVal, stateVal) {
+    if (key === "prizeItems") {
+      var pLen = Array.isArray(presetVal) ? presetVal.length : 0;
+      var sLen = Array.isArray(stateVal) ? stateVal.length : 0;
+      if (pLen === 0 && sLen > 0) return false;
+      if (pLen > 0 && (sLen === 0 || pLen >= sLen)) return true;
+      return false;
+    }
+    if (isPresetMetadataEmpty(key, presetVal)) {
+      return isPresetMetadataEmpty(key, stateVal);
+    }
+    return true;
+  }
+
+  /** 프리셋 메타데이터만 timer_state_* 에 병합 (인원 등 실시간 값은 유지) */
+  function mergeActivePresetMetadataIntoState(state) {
+    var preset = getActivePreset(state);
+    if (!state || !preset) return state;
+    for (var j = 0; j < PRESET_METADATA_ONLY_KEYS.length; j++) {
+      var key = PRESET_METADATA_ONLY_KEYS[j];
+      if (preset[key] === undefined) continue;
+      if (!shouldApplyMetadataField(key, preset[key], state[key])) continue;
+      state[key] = copyMetadataValue(key, preset[key]);
+    }
+    return state;
+  }
+
   /** 클라우드 프리셋 → 로컬 timer_state_* (대회정보·상금 등 메타데이터) */
   function copyPresetMetadataIntoState(state, preset) {
     if (!state || !preset) return state;
@@ -202,13 +232,51 @@
       var presetVal = preset[key];
       var stateVal = state[key];
       if (PRESET_METADATA_ONLY_KEYS.indexOf(key) >= 0) {
-        if (isPresetMetadataEmpty(key, presetVal)) {
-          if (!isPresetMetadataEmpty(key, stateVal)) continue;
-        }
+        if (!shouldApplyMetadataField(key, presetVal, stateVal)) continue;
       }
       state[key] = copyMetadataValue(key, presetVal);
     }
     return state;
+  }
+
+  /** 활성 프리셋 메타데이터를 타이머 동기화 상태에 즉시 반영 */
+  function flushActivePresetMetadataToTimer() {
+    var presets = loadPresetsFromStorage();
+    var aid = syncPresetId;
+    try {
+      var storedActive = localStorage.getItem("metis_activePresetId");
+      if (storedActive) aid = storedActive;
+    } catch (e0) {}
+    if (!aid) return false;
+    setSyncPresetId(aid);
+    var preset = null;
+    for (var i = 0; i < presets.length; i++) {
+      if (presets[i] && presets[i].id === aid) {
+        preset = presets[i];
+        break;
+      }
+    }
+    if (!preset) return false;
+    var state = null;
+    try {
+      var raw = localStorage.getItem(getSyncStorageKey());
+      if (raw) state = JSON.parse(raw);
+    } catch (e1) {}
+    if (!state) state = buildInitialTimerState();
+    if (!state) return false;
+    delete state.rebuy;
+    delete state.addon;
+    delete state.rebuyChips;
+    delete state.addonChips;
+    delete state.early;
+    delete state.earlyChips;
+    mergePresetsIntoState(state);
+    copyPresetMetadataIntoState(state, preset);
+    state.timer = normalizeTimer(state.timer, state);
+    ensureTotalSecondsState(state);
+    syncLevelField(state);
+    writeSyncState(state);
+    return true;
   }
 
   /** timer_state_* 에만 남아 있는 메타데이터를 프리셋 객체로 복구 */
@@ -413,6 +481,7 @@
       delete state.early;
       delete state.earlyChips;
       mergePresetsIntoState(state);
+      mergeActivePresetMetadataIntoState(state);
       state.timer = normalizeTimer(state.timer, state);
       ensureTotalSecondsState(state);
       syncLevelField(state);
@@ -985,5 +1054,6 @@
     recoverPresetsMetadataFromTimerStates: recoverPresetsMetadataFromTimerStates,
     mergePresetLists: mergePresetLists,
     isPresetMetadataEmpty: isPresetMetadataEmpty,
+    flushActivePresetMetadataToTimer: flushActivePresetMetadataToTimer,
   };
 })(typeof window !== "undefined" ? window : this);

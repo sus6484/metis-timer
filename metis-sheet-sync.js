@@ -26,6 +26,7 @@
     "prizeItems",
     "infoFontScale",
     "prizeFontScale",
+    "leftPanelRotate",
   ];
 
   function isMetadataEmpty(key, val) {

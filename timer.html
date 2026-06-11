@@ -49,6 +49,7 @@
           max(20px, env(safe-area-inset-bottom, 0px)) max(2px, env(safe-area-inset-left, 0px));
         position: relative;
         overflow-x: hidden;
+        overflow-y: hidden;
         width: 100%;
       }
       body::before {
@@ -104,11 +105,13 @@
         flex-wrap: wrap;
         margin: 0 auto;
         min-height: 0;
+        overflow: hidden;
       }
       .stage-left {
         flex: 0 1 320px;
         min-width: 240px;
         max-width: 380px;
+        min-height: 0;
         padding: 6px clamp(10px, 1.3vw, 16px) 8px clamp(18px, 2.9vw, 34px);
         border-right: 1px solid rgba(255, 255, 255, 0.12);
         display: flex;
@@ -116,12 +119,65 @@
         justify-content: center;
         align-self: stretch;
         text-align: left;
+        overflow: hidden;
       }
-      .info-wrap {
-        margin-bottom: 18px;
+      .left-carousel {
+        flex: 1 1 auto;
+        min-height: 0;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 18px;
+        overflow: hidden;
       }
-      .prize-wrap {
-        margin-bottom: 18px;
+      .left-carousel.is-rotating {
+        position: relative;
+        justify-content: flex-start;
+        gap: 0;
+      }
+      .left-carousel.is-rotating .left-panel-block {
+        display: none;
+      }
+      .left-carousel.is-rotating.is-view-meta {
+        justify-content: center;
+        gap: 18px;
+      }
+      .left-carousel.is-rotating.is-view-meta .left-panel-block--info,
+      .left-carousel.is-rotating.is-view-meta .left-panel-block--total {
+        display: block;
+      }
+      .left-carousel.is-rotating.is-view-prize .left-panel-block--prize {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        flex-direction: column;
+      }
+      .left-carousel.is-rotating.is-view-prize .prize-wrap {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .left-carousel.is-rotating.is-view-prize .prize-val {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+      }
+      .left-carousel.is-rotating.is-view-prize .prize-val::-webkit-scrollbar {
+        width: 4px;
+      }
+      .left-carousel.is-rotating.is-view-prize .prize-val::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.22);
+        border-radius: 4px;
+      }
+      .info-wrap,
+      .prize-wrap,
+      .total-prize-wrap {
+        margin: 0;
       }
       .left-lab {
         display: block;
@@ -130,9 +186,6 @@
         color: var(--pink);
         font-weight: 700;
         margin-bottom: 8px;
-      }
-      .total-prize-wrap {
-        margin-top: 6px;
       }
       .total-prize-value {
         --ls: var(--prize-font-scale, var(--left-font-scale, 1));
@@ -269,6 +322,8 @@
         }
         .stage-left {
           max-width: none;
+          min-height: 160px;
+          max-height: min(36vh, 320px);
           border-right: none;
           border-bottom: 1px solid rgba(255, 255, 255, 0.12);
           padding: 0 0 18px 0;
@@ -569,17 +624,19 @@
     </header>
     <div class="outer-layout">
       <aside class="stage-left" id="stage-left" aria-label="상금 및 대회 정보">
-        <div class="info-wrap">
-          <span class="left-lab">INFO</span>
-          <p class="tourney-info" id="el-tourney-info">—</p>
-        </div>
-        <div class="prize-wrap">
-          <span class="left-lab">PRIZE POOL</span>
-          <div class="prize-val" id="el-prize">—</div>
-        </div>
-        <div class="total-prize-wrap">
-          <span class="left-lab">TOTAL PRIZE</span>
-          <p class="total-prize-value" id="el-total-prize">—</p>
+        <div class="left-carousel is-view-meta" id="left-carousel">
+          <div class="left-panel-block left-panel-block--info info-wrap">
+            <span class="left-lab">INFO</span>
+            <p class="tourney-info" id="el-tourney-info">—</p>
+          </div>
+          <div class="left-panel-block left-panel-block--prize prize-wrap">
+            <span class="left-lab">PRIZE POOL</span>
+            <div class="prize-val" id="el-prize">—</div>
+          </div>
+          <div class="left-panel-block left-panel-block--total total-prize-wrap">
+            <span class="left-lab">TOTAL PRIZE</span>
+            <p class="total-prize-value" id="el-total-prize">—</p>
+          </div>
         </div>
       </aside>
 
@@ -835,6 +892,66 @@
             if (Number.isFinite(n)) return Math.floor(n).toLocaleString("ko-KR");
           }
           return raw;
+        }
+
+        var LEFT_CAROUSEL_MS = 5000;
+        var leftCarouselIdx = 0;
+        var leftCarouselTimer = null;
+        var leftCarouselRotating = false;
+
+        function hasPrizePoolContent(s) {
+          if (normalizePrizeItems(s).length) return true;
+          var raw =
+            s.prizeText != null && String(s.prizeText).length
+              ? String(s.prizeText).trim()
+              : "";
+          if (raw) return true;
+          if (s.guaranteedPrize != null) {
+            var n = Math.floor(Number(s.guaranteedPrize) || 0);
+            if (n > 0) return true;
+          }
+          return false;
+        }
+
+        function setLeftCarouselView(view) {
+          var carousel = $("left-carousel");
+          if (!carousel) return;
+          carousel.classList.toggle("is-view-meta", view === "meta");
+          carousel.classList.toggle("is-view-prize", view === "prize");
+          leftCarouselIdx = view === "prize" ? 1 : 0;
+        }
+
+        function stopLeftCarousel() {
+          if (leftCarouselTimer) {
+            clearInterval(leftCarouselTimer);
+            leftCarouselTimer = null;
+          }
+        }
+
+        function startLeftCarousel() {
+          stopLeftCarousel();
+          leftCarouselTimer = setInterval(function () {
+            setLeftCarouselView(leftCarouselIdx === 0 ? "prize" : "meta");
+          }, LEFT_CAROUSEL_MS);
+        }
+
+        function syncLeftCarousel(s) {
+          var carousel = $("left-carousel");
+          if (!carousel) return;
+          var shouldRotate = !!s.leftPanelRotate && hasPrizePoolContent(s);
+          if (shouldRotate !== leftCarouselRotating) {
+            leftCarouselRotating = shouldRotate;
+            carousel.classList.toggle("is-rotating", shouldRotate);
+            if (!shouldRotate) {
+              stopLeftCarousel();
+              carousel.classList.remove("is-view-prize");
+              carousel.classList.add("is-view-meta");
+              leftCarouselIdx = 0;
+            } else {
+              setLeftCarouselView("meta");
+              startLeftCarousel();
+            }
+          }
         }
 
         /** 브레이크 타임 랜덤 영상 풀 — ./video/ 상대 경로, ended 시 다음 랜덤으로 무한 반복 */
@@ -1307,6 +1424,7 @@
 
           htmlIf("el-prize", displayPrizeBlockHtml(s));
           textIf("el-total-prize", displayTotalPrize(s));
+          syncLeftCarousel(s);
           var info = (s.tournamentInfo && String(s.tournamentInfo).trim()) || "";
           textIf("el-tourney-info", info ? info : "—");
           var stageLeft = $("stage-left");
@@ -1847,8 +1965,17 @@
             localStorage.removeItem(MetisTimer.HEARTBEAT_KEY);
           } catch (e) {}
         }
-        window.addEventListener("beforeunload", clearHb);
-        window.addEventListener("pagehide", clearHb);
+        function clearLeftCarousel() {
+          stopLeftCarousel();
+        }
+        window.addEventListener("beforeunload", function () {
+          clearHb();
+          clearLeftCarousel();
+        });
+        window.addEventListener("pagehide", function () {
+          clearHb();
+          clearLeftCarousel();
+        });
 
         tick();
         }

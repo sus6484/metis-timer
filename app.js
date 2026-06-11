@@ -28,6 +28,7 @@
       regCloseAt: null,
       infoFontScale: 1,
       prizeFontScale: 1,
+      leftPanelRotate: false,
     };
   }
 
@@ -144,6 +145,7 @@
     "regCloseLevel",
     "infoFontScale",
     "prizeFontScale",
+    "leftPanelRotate",
   ];
 
   /** 구글 시트 프리셋에 저장·동기화되는 메타데이터 (인원 등 실시간 값 제외) */
@@ -155,6 +157,7 @@
     "prizeItems",
     "infoFontScale",
     "prizeFontScale",
+    "leftPanelRotate",
   ];
 
   function applyPresetMetadataOverSync(target, embedded) {
@@ -169,7 +172,8 @@
         continue;
       }
       if (k === "prizeItems" && Array.isArray(embedded[k])) {
-        target[k] = embedded[k].slice();
+        var cur = Array.isArray(target[k]) ? target[k] : [];
+        if (embedded[k].length >= cur.length) target[k] = embedded[k].slice();
       } else {
         target[k] = embedded[k];
       }
@@ -246,6 +250,7 @@
       var k = PRESET_TOURNAMENT_KEYS[i];
       if (remoteState[k] === undefined) continue;
       if (
+        k !== "prizeItems" &&
         PRESET_METADATA_KEYS.indexOf(k) >= 0 &&
         MetisTimer.isPresetMetadataEmpty &&
         MetisTimer.isPresetMetadataEmpty(k, remoteState[k]) &&
@@ -253,7 +258,11 @@
       ) {
         continue;
       }
-      list[idx][k] = remoteState[k];
+      if (k === "prizeItems" && Array.isArray(remoteState[k])) {
+        list[idx][k] = remoteState[k].slice();
+      } else {
+        list[idx][k] = remoteState[k];
+      }
     }
     savePresets(list);
   }
@@ -281,6 +290,7 @@
       regCloseLevel: 0,
       infoFontScale: 1,
       prizeFontScale: 1,
+      leftPanelRotate: false,
     };
   }
 
@@ -663,6 +673,7 @@
   var outputInfoFontScale = document.getElementById("output-info-font-scale");
   var inputPrizeFontScale = document.getElementById("input-prize-font-scale");
   var outputPrizeFontScale = document.getElementById("output-prize-font-scale");
+  var inputLeftPanelRotate = document.getElementById("input-left-panel-rotate");
   var modalPrize = document.getElementById("modal-prize");
   var modalPrizePanel = document.getElementById("modal-prize-panel");
   var modalPrizeTbody = document.getElementById("modal-prize-tbody");
@@ -878,10 +889,17 @@
 
   function savePrizeModal() {
     var items = normalizePrizeItems(getPrizeItemsFromModal());
+    if (!items.length) {
+      alert("등수와 금액을 모두 입력한 상금 행이 최소 1개 필요합니다.");
+      return;
+    }
     remoteState.prizeItems = items;
     remoteState.prizeText = "";
     if ("guaranteedPrize" in remoteState) delete remoteState.guaranteedPrize;
     persistAll();
+    if (MetisTimer.flushActivePresetMetadataToTimer) {
+      MetisTimer.flushActivePresetMetadataToTimer();
+    }
     renderRemote();
     closePrizeModal();
   }
@@ -918,6 +936,9 @@
         Number(inputPrizeFontScale.value) / 100
       );
     }
+    if (inputLeftPanelRotate) {
+      remoteState.leftPanelRotate = !!inputLeftPanelRotate.checked;
+    }
   }
 
   function fillMetaInputsFromRemoteState() {
@@ -947,6 +968,9 @@
       outputPrizeFontScale,
       remoteState.prizeFontScale
     );
+    if (inputLeftPanelRotate) {
+      inputLeftPanelRotate.checked = !!remoteState.leftPanelRotate;
+    }
   }
 
   function bindMetaFormOnce() {
@@ -982,6 +1006,9 @@
     }
     bindFontScaleInput(inputInfoFontScale, outputInfoFontScale);
     bindFontScaleInput(inputPrizeFontScale, outputPrizeFontScale);
+    if (inputLeftPanelRotate) {
+      inputLeftPanelRotate.addEventListener("change", pushMeta);
+    }
   }
 
   function setStatNumberInputIfNotFocused(id, rawVal) {

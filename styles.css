@@ -513,6 +513,34 @@ input {
   letter-spacing: 0.02em;
 }
 
+.remote-meta-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.remote-meta-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.remote-meta-inline-check input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--purple);
+  cursor: pointer;
+}
+
 .remote-meta input,
 .remote-meta textarea {
   width: 100%;
