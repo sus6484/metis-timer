@@ -541,6 +541,45 @@ input {
   cursor: pointer;
 }
 
+.remote-meta-toggle-row {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+}
+
+.remote-meta-toggle-row input[type="checkbox"] {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 2px 0 0;
+  accent-color: var(--purple);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.remote-meta-toggle-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.remote-meta-toggle-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.remote-meta-toggle-hint {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
 .remote-meta input,
 .remote-meta textarea {
   width: 100%;

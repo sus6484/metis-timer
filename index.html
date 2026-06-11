@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <title>Metis — 홀덤 타이머 관리</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260611" />
   </head>
   <body>
     <div class="app">
@@ -47,16 +47,17 @@
                 placeholder="예: 경남미니토너먼트&#10;남포점"
               ></textarea>
             </label>
-            <div class="remote-meta-field remote-meta-field--full">
-              <div class="remote-meta-label-row">
-                <span class="remote-meta-label">대회 정보 (INFO: 일시·장소·비고 등)</span>
-                <label class="remote-meta-inline-check" for="input-left-panel-rotate">
-                  <input id="input-left-panel-rotate" type="checkbox" />
-                  <span>화면전환</span>
-                </label>
-              </div>
+            <label class="remote-meta-field remote-meta-field--full">
+              <span class="remote-meta-label">대회 정보 (INFO: 일시·장소·비고 등)</span>
               <textarea id="input-tournament-info" rows="3" maxlength="600" placeholder="타이머 좌측 상단에 표시됩니다."></textarea>
-            </div>
+            </label>
+            <label class="remote-meta-field remote-meta-field--full remote-meta-toggle-row" for="input-left-panel-rotate">
+              <input id="input-left-panel-rotate" type="checkbox" />
+              <span class="remote-meta-toggle-copy">
+                <span class="remote-meta-toggle-title">화면전환</span>
+                <span class="remote-meta-toggle-hint">5초마다 INFO·총상금 ↔ 상금목록 (상금 입력 시)</span>
+              </span>
+            </label>
             <label class="remote-meta-field remote-meta-field--full" for="input-info-font-scale">
               <span class="remote-meta-label">타이머 좌측 글자 크기 (INFO)</span>
               <div class="remote-font-scale-row">
