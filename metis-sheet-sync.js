@@ -16,12 +16,122 @@
   var pullPromise = null;
   var saveTimer = null;
   var pendingSave = null;
+  var lastCloudPullData = null;
+
+  var METADATA_KEYS = [
+    "tournamentName",
+    "totalPrizeText",
+    "tournamentInfo",
+    "prizeText",
+    "prizeItems",
+    "infoFontScale",
+    "prizeFontScale",
+  ];
+
+  function isMetadataEmpty(key, val) {
+    if (val === undefined || val === null) return true;
+    if (key === "prizeItems") return !Array.isArray(val) || val.length === 0;
+    if (typeof val === "string") return !val.trim();
+    return false;
+  }
+
+  function mergeMetadataPreferNonEmpty(target, source) {
+    if (!target || !source) return target;
+    for (var i = 0; i < METADATA_KEYS.length; i++) {
+      var k = METADATA_KEYS[i];
+      if (source[k] === undefined || isMetadataEmpty(k, source[k])) continue;
+      target[k] =
+        k === "prizeItems" && Array.isArray(source[k])
+          ? source[k].slice()
+          : source[k];
+    }
+    return target;
+  }
+
+  function mergePresetListsLocal(localList, cloudList) {
+    if (global.MetisTimer && global.MetisTimer.mergePresetLists) {
+      return global.MetisTimer.mergePresetLists(localList, cloudList);
+    }
+    localList = Array.isArray(localList) ? localList : [];
+    cloudList = Array.isArray(cloudList) ? cloudList : [];
+    if (!cloudList.length) return localList.length ? localList : cloudList;
+    var localById = {};
+    localList.forEach(function (p) {
+      if (p && p.id) localById[p.id] = p;
+    });
+    var out = [];
+    var seen = {};
+    cloudList.forEach(function (cloudP) {
+      if (!cloudP || !cloudP.id) return;
+      seen[cloudP.id] = true;
+      var merged = Object.assign({}, cloudP);
+      mergeMetadataPreferNonEmpty(merged, localById[cloudP.id]);
+      out.push(merged);
+    });
+    localList.forEach(function (localP) {
+      if (!localP || !localP.id || seen[localP.id]) return;
+      out.push(localP);
+    });
+    return out.length ? out : cloudList;
+  }
+
+  function cloudHasWeakerMetadataThanLocal(cloudData) {
+    var localList = [];
+    try {
+      var raw = localStorage.getItem(STORAGE_PRESETS);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) localList = parsed;
+      }
+    } catch (e0) {
+      return false;
+    }
+    var cloudList = cloudData && cloudData.presets;
+    if (!Array.isArray(cloudList)) return false;
+    var cloudById = {};
+    cloudList.forEach(function (p) {
+      if (p && p.id) cloudById[p.id] = p;
+    });
+    for (var i = 0; i < localList.length; i++) {
+      var localP = localList[i];
+      if (!localP || !localP.id) continue;
+      var cloudP = cloudById[localP.id] || {};
+      for (var j = 0; j < METADATA_KEYS.length; j++) {
+        var k = METADATA_KEYS[j];
+        if (!isMetadataEmpty(k, localP[k]) && isMetadataEmpty(k, cloudP[k])) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function pushLocalPresetsToCloud() {
+    try {
+      var raw = localStorage.getItem(STORAGE_PRESETS);
+      var active = localStorage.getItem(STORAGE_ACTIVE);
+      if (!raw) return;
+      var presets = JSON.parse(raw);
+      if (Array.isArray(presets) && presets.length) {
+        savePresetsToCloud(presets, active);
+      }
+    } catch (e1) {}
+  }
 
   function applyToLocal(data) {
     if (!data || typeof data !== "object") return false;
     var changed = false;
     if (Array.isArray(data.presets) && data.presets.length > 0) {
-      localStorage.setItem(STORAGE_PRESETS, JSON.stringify(data.presets));
+      var localList = [];
+      try {
+        var raw = localStorage.getItem(STORAGE_PRESETS);
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) localList = parsed;
+        }
+      } catch (e0) {}
+      var merged = mergePresetListsLocal(localList, data.presets);
+      localStorage.setItem(STORAGE_PRESETS, JSON.stringify(merged));
       changed = true;
     }
     if (data.activePresetId != null && String(data.activePresetId) !== "") {
@@ -39,9 +149,19 @@
         return res.json();
       })
       .then(function (data) {
+        lastCloudPullData = data;
         applyToLocal(data);
-        if (global.MetisTimer && global.MetisTimer.syncAllPresetsMetadataFromStorage) {
-          global.MetisTimer.syncAllPresetsMetadataFromStorage();
+        var recovered = false;
+        if (global.MetisTimer) {
+          if (global.MetisTimer.recoverPresetsMetadataFromTimerStates) {
+            recovered = !!global.MetisTimer.recoverPresetsMetadataFromTimerStates();
+          }
+          if (global.MetisTimer.syncAllPresetsMetadataFromStorage) {
+            global.MetisTimer.syncAllPresetsMetadataFromStorage();
+          }
+        }
+        if (recovered || cloudHasWeakerMetadataThanLocal(data)) {
+          pushLocalPresetsToCloud();
         }
         return data;
       })
@@ -114,8 +234,15 @@
         return loadScript("timer-core.js");
       })
       .then(function () {
+        var recovered = false;
+        if (window.MetisTimer && window.MetisTimer.recoverPresetsMetadataFromTimerStates) {
+          recovered = !!window.MetisTimer.recoverPresetsMetadataFromTimerStates();
+        }
         if (window.MetisTimer && window.MetisTimer.syncAllPresetsMetadataFromStorage) {
           window.MetisTimer.syncAllPresetsMetadataFromStorage();
+        }
+        if (recovered || cloudHasWeakerMetadataThanLocal(lastCloudPullData)) {
+          pushLocalPresetsToCloud();
         }
         return loadScript("metis-audio.js");
       })
@@ -139,5 +266,9 @@
     savePresetsToCloud: savePresetsToCloud,
     applyToLocal: applyToLocal,
     bootTimerPage: bootTimerPage,
+    cloudHasWeakerMetadataThanLocal: cloudHasWeakerMetadataThanLocal,
+    getLastCloudPullData: function () {
+      return lastCloudPullData;
+    },
   };
 })(typeof window !== "undefined" ? window : this);

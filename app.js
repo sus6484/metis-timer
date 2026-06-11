@@ -162,6 +162,12 @@
     for (var i = 0; i < PRESET_METADATA_KEYS.length; i++) {
       var k = PRESET_METADATA_KEYS[i];
       if (embedded[k] === undefined) continue;
+      if (
+        MetisTimer.isPresetMetadataEmpty &&
+        MetisTimer.isPresetMetadataEmpty(k, embedded[k])
+      ) {
+        continue;
+      }
       if (k === "prizeItems" && Array.isArray(embedded[k])) {
         target[k] = embedded[k].slice();
       } else {
@@ -238,7 +244,16 @@
     if (idx < 0) return;
     for (var i = 0; i < PRESET_TOURNAMENT_KEYS.length; i++) {
       var k = PRESET_TOURNAMENT_KEYS[i];
-      if (remoteState[k] !== undefined) list[idx][k] = remoteState[k];
+      if (remoteState[k] === undefined) continue;
+      if (
+        PRESET_METADATA_KEYS.indexOf(k) >= 0 &&
+        MetisTimer.isPresetMetadataEmpty &&
+        MetisTimer.isPresetMetadataEmpty(k, remoteState[k]) &&
+        !MetisTimer.isPresetMetadataEmpty(k, list[idx][k])
+      ) {
+        continue;
+      }
+      list[idx][k] = remoteState[k];
     }
     savePresets(list);
   }
@@ -1885,6 +1900,10 @@
 
   function startAppAfterCloudSync() {
     hydrateAllPresetTournaments();
+    var recovered = false;
+    if (MetisTimer.recoverPresetsMetadataFromTimerStates) {
+      recovered = !!MetisTimer.recoverPresetsMetadataFromTimerStates();
+    }
     if (MetisTimer.syncAllPresetsMetadataFromStorage) {
       MetisTimer.syncAllPresetsMetadataFromStorage();
     }
@@ -1894,6 +1913,16 @@
       renderRemote();
       renderPresets();
       persistAll();
+      if (
+        window.MetisSheetSync &&
+        (recovered ||
+          (MetisSheetSync.cloudHasWeakerMetadataThanLocal &&
+            MetisSheetSync.cloudHasWeakerMetadataThanLocal(
+              MetisSheetSync.getLastCloudPullData && MetisSheetSync.getLastCloudPullData()
+            )))
+      ) {
+        MetisSheetSync.savePresetsToCloud(getPresets(), getActivePresetId());
+      }
       syncLastSeenFromStore();
     } else {
       showScreen("auth");

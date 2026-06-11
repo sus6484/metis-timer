@@ -65,6 +65,67 @@
     "leftFontScale",
   ];
 
+  /** 구글 시트·프리셋에 저장되는 정적 메타데이터 (인원 등 실시간 값 제외) */
+  var PRESET_METADATA_ONLY_KEYS = [
+    "tournamentName",
+    "totalPrizeText",
+    "tournamentInfo",
+    "prizeText",
+    "prizeItems",
+    "infoFontScale",
+    "prizeFontScale",
+  ];
+
+  function isPresetMetadataEmpty(key, val) {
+    if (val === undefined || val === null) return true;
+    if (key === "prizeItems") return !Array.isArray(val) || val.length === 0;
+    if (typeof val === "string") return !val.trim();
+    return false;
+  }
+
+  function copyMetadataValue(key, val) {
+    if (key === "prizeItems" && Array.isArray(val)) return val.slice();
+    return val;
+  }
+
+  function mergeMetadataFieldsPreferNonEmpty(target, source) {
+    if (!target || !source) return target;
+    for (var i = 0; i < PRESET_METADATA_ONLY_KEYS.length; i++) {
+      var k = PRESET_METADATA_ONLY_KEYS[i];
+      if (source[k] === undefined || isPresetMetadataEmpty(k, source[k])) continue;
+      target[k] = copyMetadataValue(k, source[k]);
+    }
+    return target;
+  }
+
+  function mergePresetRecord(localPreset, cloudPreset) {
+    var out = Object.assign({}, cloudPreset || {});
+    mergeMetadataFieldsPreferNonEmpty(out, localPreset);
+    return out;
+  }
+
+  function mergePresetLists(localList, cloudList) {
+    localList = Array.isArray(localList) ? localList : [];
+    cloudList = Array.isArray(cloudList) ? cloudList : [];
+    if (!cloudList.length) return localList.length ? localList : cloudList;
+    var localById = {};
+    localList.forEach(function (p) {
+      if (p && p.id) localById[p.id] = p;
+    });
+    var out = [];
+    var seen = {};
+    cloudList.forEach(function (cloudP) {
+      if (!cloudP || !cloudP.id) return;
+      seen[cloudP.id] = true;
+      out.push(mergePresetRecord(localById[cloudP.id], cloudP));
+    });
+    localList.forEach(function (localP) {
+      if (!localP || !localP.id || seen[localP.id]) return;
+      out.push(localP);
+    });
+    return out.length ? out : cloudList;
+  }
+
   function loadPresetsFromStorage() {
     try {
       var raw = localStorage.getItem(PRESETS_STORAGE_KEY);
@@ -138,13 +199,50 @@
     for (var j = 0; j < PRESET_EMBED_KEYS.length; j++) {
       var key = PRESET_EMBED_KEYS[j];
       if (preset[key] === undefined) continue;
-      if (key === "prizeItems" && Array.isArray(preset[key])) {
-        state[key] = preset[key].slice();
-      } else {
-        state[key] = preset[key];
+      var presetVal = preset[key];
+      var stateVal = state[key];
+      if (PRESET_METADATA_ONLY_KEYS.indexOf(key) >= 0) {
+        if (isPresetMetadataEmpty(key, presetVal)) {
+          if (!isPresetMetadataEmpty(key, stateVal)) continue;
+        }
       }
+      state[key] = copyMetadataValue(key, presetVal);
     }
     return state;
+  }
+
+  /** timer_state_* 에만 남아 있는 메타데이터를 프리셋 객체로 복구 */
+  function recoverPresetsMetadataFromTimerStates() {
+    var presets = loadPresetsFromStorage();
+    if (!presets.length) return false;
+    var savedSyncId = syncPresetId;
+    var changed = false;
+
+    for (var i = 0; i < presets.length; i++) {
+      var p = presets[i];
+      if (!p || !p.id) continue;
+      setSyncPresetId(p.id);
+      try {
+        var raw = localStorage.getItem(getSyncStorageKey());
+        if (!raw) continue;
+        var state = JSON.parse(raw);
+        for (var j = 0; j < PRESET_METADATA_ONLY_KEYS.length; j++) {
+          var key = PRESET_METADATA_ONLY_KEYS[j];
+          if (
+            !isPresetMetadataEmpty(key, p[key]) ||
+            isPresetMetadataEmpty(key, state[key])
+          ) {
+            continue;
+          }
+          p[key] = copyMetadataValue(key, state[key]);
+          changed = true;
+        }
+      } catch (e0) {}
+    }
+
+    if (changed) savePresetsToStorage(presets);
+    setSyncPresetId(savedSyncId);
+    return changed;
   }
 
   function syncAllPresetsMetadataFromStorage() {
@@ -788,5 +886,8 @@
     engineStep: engineStep,
     pickRemoteSlice: pickRemoteSlice,
     syncAllPresetsMetadataFromStorage: syncAllPresetsMetadataFromStorage,
+    recoverPresetsMetadataFromTimerStates: recoverPresetsMetadataFromTimerStates,
+    mergePresetLists: mergePresetLists,
+    isPresetMetadataEmpty: isPresetMetadataEmpty,
   };
 })(typeof window !== "undefined" ? window : this);
