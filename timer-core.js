@@ -60,6 +60,9 @@
     "entry",
     "entryChips",
     "regCloseLevel",
+    "infoFontScale",
+    "prizeFontScale",
+    "leftFontScale",
   ];
 
   function loadPresetsFromStorage() {
@@ -90,6 +93,8 @@
       entry: 0,
       entryChips: 50000,
       regCloseLevel: 15,
+      infoFontScale: 1,
+      prizeFontScale: 1,
     };
   }
 
@@ -276,6 +281,9 @@
     "level",
     "entryChips",
     "regCloseLevel",
+    "infoFontScale",
+    "prizeFontScale",
+    "leftFontScale",
   ];
 
   function pickRemoteSlice(state) {
@@ -290,7 +298,7 @@
       state.guaranteedPrize != null
     ) {
       var n = Math.floor(Number(state.guaranteedPrize) || 0);
-      if (n > 0) out.prizeText = n.toLocaleString("ko-KR") + " 원";
+      if (n > 0) out.prizeText = n.toLocaleString("ko-KR");
     }
     return out;
   }

@@ -26,6 +26,8 @@
       totalPrizeText: "",
       tournamentInfo: "",
       regCloseAt: null,
+      infoFontScale: 1,
+      prizeFontScale: 1,
     };
   }
 
@@ -113,7 +115,7 @@
     delete r.early;
     delete r.earlyChips;
     clampPlayerEntry(r);
-    return r;
+    return migrateFontScales(r);
   }
 
   function getPresets() {
@@ -139,6 +141,8 @@
     "entry",
     "entryChips",
     "regCloseLevel",
+    "infoFontScale",
+    "prizeFontScale",
   ];
 
   function migrateLegacyTimerSync() {
@@ -164,8 +168,28 @@
           changed = true;
         }
       });
+      if (p.infoFontScale === undefined) {
+        p.infoFontScale =
+          p.leftFontScale != null ? p.leftFontScale : d.infoFontScale;
+        changed = true;
+      }
+      if (p.prizeFontScale === undefined) {
+        p.prizeFontScale =
+          p.leftFontScale != null ? p.leftFontScale : d.prizeFontScale;
+        changed = true;
+      }
     });
     if (changed) savePresets(list);
+  }
+
+  function migrateFontScales(state) {
+    if (!state) return state;
+    var legacy = state.leftFontScale != null ? state.leftFontScale : 1;
+    if (state.infoFontScale == null) state.infoFontScale = legacy;
+    if (state.prizeFontScale == null) state.prizeFontScale = legacy;
+    state.infoFontScale = clampLeftFontScale(state.infoFontScale);
+    state.prizeFontScale = clampLeftFontScale(state.prizeFontScale);
+    return state;
   }
 
   function pickEmbeddedTournament(p) {
@@ -214,7 +238,15 @@
       entry: 0,
       entryChips: 0,
       regCloseLevel: 0,
+      infoFontScale: 1,
+      prizeFontScale: 1,
     };
+  }
+
+  function clampLeftFontScale(raw) {
+    var n = Number(raw);
+    if (!Number.isFinite(n)) return 1;
+    return Math.min(2, Math.max(0.5, n));
   }
 
   var PRESET_EXPORT_KEY = "metisPresetExport";
@@ -312,6 +344,10 @@
       else preset[tk] = dr[tk];
     }
     if (preset.prizeItems == null || !Array.isArray(preset.prizeItems)) preset.prizeItems = [];
+    if (raw.leftFontScale != null) {
+      if (raw.infoFontScale === undefined) preset.infoFontScale = raw.leftFontScale;
+      if (raw.prizeFontScale === undefined) preset.prizeFontScale = raw.leftFontScale;
+    }
     if (raw.regCloseAfterPlayLevel != null) {
       var rcl = Math.floor(Number(raw.regCloseAfterPlayLevel));
       if (Number.isFinite(rcl) && rcl >= 1 && rcl <= 999) preset.regCloseAfterPlayLevel = rcl;
@@ -536,7 +572,12 @@
   var modalLevelsTbody = document.getElementById("modal-levels-tbody");
   var modalAddLevel = document.getElementById("modal-add-level");
   var modalAddBreak = document.getElementById("modal-add-break");
-  var modalBulkMinutes = document.getElementById("modal-bulk-minutes");
+  var modalBulkFrom1 = document.getElementById("modal-bulk-from-1");
+  var modalBulkTo1 = document.getElementById("modal-bulk-to-1");
+  var modalBulkMin1 = document.getElementById("modal-bulk-min-1");
+  var modalBulkFrom2 = document.getElementById("modal-bulk-from-2");
+  var modalBulkTo2 = document.getElementById("modal-bulk-to-2");
+  var modalBulkMin2 = document.getElementById("modal-bulk-min-2");
   var modalBulkApply = document.getElementById("modal-bulk-apply");
   var modalCancel = document.getElementById("modal-cancel");
   var modalSave = document.getElementById("modal-save");
@@ -555,6 +596,10 @@
   var inputTotalPrize = document.getElementById("input-total-prize");
   var btnOpenPrizeModal = document.getElementById("btn-open-prize-modal");
   var inputTournamentInfo = document.getElementById("input-tournament-info");
+  var inputInfoFontScale = document.getElementById("input-info-font-scale");
+  var outputInfoFontScale = document.getElementById("output-info-font-scale");
+  var inputPrizeFontScale = document.getElementById("input-prize-font-scale");
+  var outputPrizeFontScale = document.getElementById("output-prize-font-scale");
   var modalPrize = document.getElementById("modal-prize");
   var modalPrizePanel = document.getElementById("modal-prize-panel");
   var modalPrizeTbody = document.getElementById("modal-prize-tbody");
@@ -748,15 +793,24 @@
     });
   }
 
+  function updateModalScrollLock() {
+    var anyOpen =
+      (modal && modal.classList.contains("is-open")) ||
+      (modalPrize && modalPrize.classList.contains("is-open"));
+    document.body.classList.toggle("modal-open", anyOpen);
+  }
+
   function openPrizeModal() {
     if (!modalPrize) return;
     renderPrizeModalFromRemoteState();
     modalPrize.classList.add("is-open");
+    updateModalScrollLock();
   }
 
   function closePrizeModal() {
     if (!modalPrize) return;
     modalPrize.classList.remove("is-open");
+    updateModalScrollLock();
   }
 
   function savePrizeModal() {
@@ -791,6 +845,16 @@
     remoteState.tournamentInfo = inputTournamentInfo
       ? inputTournamentInfo.value
       : "";
+    if (inputInfoFontScale) {
+      remoteState.infoFontScale = clampLeftFontScale(
+        Number(inputInfoFontScale.value) / 100
+      );
+    }
+    if (inputPrizeFontScale) {
+      remoteState.prizeFontScale = clampLeftFontScale(
+        Number(inputPrizeFontScale.value) / 100
+      );
+    }
   }
 
   function fillMetaInputsFromRemoteState() {
@@ -802,6 +866,24 @@
         remoteState.totalPrizeText != null ? String(remoteState.totalPrizeText) : "";
     if (inputTournamentInfo)
       inputTournamentInfo.value = remoteState.tournamentInfo || "";
+    function fillFontScaleInput(input, output, scale) {
+      if (!input) return;
+      var fs = clampLeftFontScale(scale != null ? scale : 1);
+      var pct = String(Math.round(fs * 100));
+      input.value = pct;
+      input.setAttribute("aria-valuenow", pct);
+      if (output) output.textContent = pct + "%";
+    }
+    fillFontScaleInput(
+      inputInfoFontScale,
+      outputInfoFontScale,
+      remoteState.infoFontScale
+    );
+    fillFontScaleInput(
+      inputPrizeFontScale,
+      outputPrizeFontScale,
+      remoteState.prizeFontScale
+    );
   }
 
   function bindMetaFormOnce() {
@@ -824,6 +906,19 @@
       inputTournamentInfo.addEventListener("change", pushMeta);
       inputTournamentInfo.addEventListener("blur", pushMeta);
     }
+    function bindFontScaleInput(input, output) {
+      if (!input) return;
+      function pushFontScale() {
+        syncMetaFromInputs();
+        if (output) output.textContent = input.value + "%";
+        input.setAttribute("aria-valuenow", input.value);
+        persistAll();
+      }
+      input.addEventListener("input", pushFontScale);
+      input.addEventListener("change", pushFontScale);
+    }
+    bindFontScaleInput(inputInfoFontScale, outputInfoFontScale);
+    bindFontScaleInput(inputPrizeFontScale, outputPrizeFontScale);
   }
 
   function setStatNumberInputIfNotFocused(id, rawVal) {
@@ -1278,24 +1373,96 @@
     return { levels: out, error: null };
   }
 
+  function listModalPlayLevelRows() {
+    if (!modalLevelsTbody) return [];
+    var trs = modalLevelsTbody.querySelectorAll("tr");
+    var levelNum = 0;
+    var list = [];
+    trs.forEach(function (tr) {
+      if (tr.getAttribute("data-row-type") === "break") return;
+      levelNum++;
+      list.push({ levelNum: levelNum, tr: tr });
+    });
+    return list;
+  }
+
+  function flashBulkMinutesInput(minInput) {
+    if (!minInput) return;
+    minInput.classList.remove("is-bulk-updated");
+    void minInput.offsetWidth;
+    minInput.classList.add("is-bulk-updated");
+  }
+
+  function parseBulkMinutesRange(fromEl, toEl, minEl, label) {
+    var fromRaw = fromEl ? String(fromEl.value).trim() : "";
+    var toRaw = toEl ? String(toEl.value).trim() : "";
+    var minRaw = minEl ? String(minEl.value).trim() : "";
+    if (!fromRaw && !toRaw && !minRaw) return null;
+    var from = parseInt(fromRaw, 10);
+    var to = parseInt(toRaw, 10);
+    var minutes = Math.floor(Number(minRaw));
+    if (!Number.isFinite(from) || from < 1 || from > 999) {
+      return { error: label + ": 시작 레벨을 1~999 사이로 입력해 주세요." };
+    }
+    if (!Number.isFinite(to) || to < 1 || to > 999) {
+      return { error: label + ": 끝 레벨을 1~999 사이로 입력해 주세요." };
+    }
+    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 999) {
+      return { error: label + ": 블라인드(분)을 1~999 사이로 입력해 주세요." };
+    }
+    if (from > to) {
+      return { error: label + ": 시작 레벨이 끝 레벨보다 클 수 없습니다." };
+    }
+    return { from: from, to: to, minutes: minutes };
+  }
+
+  function applyBulkMinutesRange(range, playRows) {
+    if (!range || !playRows.length) return 0;
+    var maxLevel = playRows[playRows.length - 1].levelNum;
+    if (range.from > maxLevel) return 0;
+    var to = Math.min(range.to, maxLevel);
+    var updated = 0;
+    playRows.forEach(function (item) {
+      if (item.levelNum < range.from || item.levelNum > to) return;
+      var minInput = item.tr.querySelector('input[data-f="minutes"]');
+      if (!minInput) return;
+      minInput.value = String(range.minutes);
+      flashBulkMinutesInput(minInput);
+      updated++;
+    });
+    return updated;
+  }
+
   function applyBulkMinutesToLevelRows() {
-    if (!modalLevelsTbody || !modalBulkMinutes) return;
-    var value = Math.floor(Number(modalBulkMinutes.value));
-    if (!Number.isFinite(value) || value < 1 || value > 999) {
-      alert("일괄 적용할 블라인드(분) 값을 1~999 사이로 입력해 주세요.");
-      modalBulkMinutes.focus();
+    if (!modalLevelsTbody) return;
+    var playRows = listModalPlayLevelRows();
+    if (!playRows.length) return;
+    var ranges = [
+      parseBulkMinutesRange(modalBulkFrom1, modalBulkTo1, modalBulkMin1, "구간 1"),
+      parseBulkMinutesRange(modalBulkFrom2, modalBulkTo2, modalBulkMin2, "구간 2"),
+    ];
+    var active = [];
+    for (var i = 0; i < ranges.length; i++) {
+      var r = ranges[i];
+      if (!r) continue;
+      if (r.error) {
+        alert(r.error);
+        return;
+      }
+      active.push(r);
+    }
+    if (!active.length) {
+      alert("적용할 구간을 입력해 주세요. (시작·끝 레벨, 분)");
+      if (modalBulkFrom1) modalBulkFrom1.focus();
       return;
     }
-    var rows = modalLevelsTbody.querySelectorAll('tr[data-row-type="level"]');
-    if (!rows.length) return;
-    rows.forEach(function (tr) {
-      var minInput = tr.querySelector('input[data-f="minutes"]');
-      if (!minInput) return;
-      minInput.value = String(value);
-      minInput.classList.remove("is-bulk-updated");
-      void minInput.offsetWidth;
-      minInput.classList.add("is-bulk-updated");
+    var totalUpdated = 0;
+    active.forEach(function (range) {
+      totalUpdated += applyBulkMinutesRange(range, playRows);
     });
+    if (!totalUpdated) {
+      alert("입력한 레벨 구간에 해당하는 블라인드 행이 없습니다.");
+    }
   }
 
   function showNewPresetMeta(show) {
@@ -1347,6 +1514,7 @@
     fillNewPresetMetaDefaults();
     renderModalLevelRows([defaultLevelRow()]);
     modal.classList.add("is-open");
+    updateModalScrollLock();
   }
 
   function openModalEdit(id) {
@@ -1377,10 +1545,12 @@
     var lv = p.levels && p.levels.length ? p.levels : [defaultLevelRow()];
     renderModalLevelRows(lv);
     modal.classList.add("is-open");
+    updateModalScrollLock();
   }
 
   function closeModal() {
     modal.classList.remove("is-open");
+    updateModalScrollLock();
   }
 
   function saveModal() {
@@ -1609,21 +1779,22 @@
   if (modalBulkApply) {
     modalBulkApply.addEventListener("click", applyBulkMinutesToLevelRows);
   }
-  if (modalBulkMinutes) {
-    modalBulkMinutes.addEventListener("keydown", function (e) {
+  [
+    modalBulkFrom1,
+    modalBulkTo1,
+    modalBulkMin1,
+    modalBulkFrom2,
+    modalBulkTo2,
+    modalBulkMin2,
+  ].forEach(function (el) {
+    if (!el) return;
+    el.addEventListener("keydown", function (e) {
       if (e.key === "Enter") {
         e.preventDefault();
         applyBulkMinutesToLevelRows();
       }
     });
-  }
-  modalPanel.addEventListener("click", function (e) {
-    e.stopPropagation();
   });
-  modal.addEventListener("click", function (e) {
-    if (e.target === modal) closeModal();
-  });
-
   if (btnOpenPrizeModal) {
     btnOpenPrizeModal.addEventListener("click", openPrizeModal);
   }
@@ -1637,16 +1808,6 @@
   }
   if (modalPrizeCancel) {
     modalPrizeCancel.addEventListener("click", closePrizeModal);
-  }
-  if (modalPrizePanel) {
-    modalPrizePanel.addEventListener("click", function (e) {
-      e.stopPropagation();
-    });
-  }
-  if (modalPrize) {
-    modalPrize.addEventListener("click", function (e) {
-      if (e.target === modalPrize) closePrizeModal();
-    });
   }
   if (modalPrizeTbody) {
     ensurePrizeSortable();

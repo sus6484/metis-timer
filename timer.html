@@ -117,9 +117,20 @@
         align-self: stretch;
         text-align: left;
       }
+      .info-wrap {
+        --ls: var(--info-font-scale, var(--left-font-scale, 1));
+        margin-bottom: 18px;
+      }
+      .prize-wrap,
+      .total-prize-wrap {
+        --ls: var(--prize-font-scale, var(--left-font-scale, 1));
+      }
+      .prize-wrap {
+        margin-bottom: 18px;
+      }
       .left-lab {
         display: block;
-        font-size: 0.72rem;
+        font-size: calc(1.44rem * var(--ls));
         letter-spacing: 0.16em;
         color: var(--pink);
         font-weight: 700;
@@ -131,7 +142,7 @@
       .total-prize-value {
         margin: 0;
         color: var(--pink);
-        font-size: clamp(1.1rem, 3.4vw, 1.85rem);
+        font-size: calc(clamp(1.1rem, 3.4vw, 1.85rem) * var(--ls));
         font-weight: 800;
         line-height: 1.2;
         font-variant-numeric: tabular-nums;
@@ -148,15 +159,9 @@
         max-height: none;
         overflow: hidden;
         padding-right: 0;
-        font-size: 1rem;
+        font-size: calc(1rem * var(--ls));
         line-height: 1.35;
         color: var(--text);
-      }
-      .info-wrap {
-        margin-bottom: 18px;
-      }
-      .prize-wrap {
-        margin-bottom: 18px;
       }
       .prize-item {
         display: flex;
@@ -169,30 +174,32 @@
       .prize-rank {
         color: #e5e7eb;
         font-weight: 700;
-        font-size: clamp(0.95rem, 2.1vw, 1.15rem);
+        font-size: calc(clamp(0.95rem, 2.1vw, 1.15rem) * var(--ls));
         letter-spacing: 0.02em;
       }
       .prize-amount {
         color: #ffffff;
         font-weight: 700;
-        font-size: clamp(1rem, 2.3vw, 1.22rem);
+        font-size: calc(clamp(1rem, 2.3vw, 1.22rem) * var(--ls));
         font-variant-numeric: tabular-nums;
         margin-left: auto;
       }
       .prize-item--top .prize-rank {
         color: var(--pink);
-        font-size: clamp(1.08rem, 2.7vw, 1.4rem);
+        font-size: calc(clamp(1.08rem, 2.7vw, 1.4rem) * var(--ls));
       }
       .prize-item--top .prize-amount {
         color: #f5ffd1;
-        font-size: clamp(1.2rem, 3.1vw, 1.75rem);
+        font-size: calc(clamp(1.2rem, 3.1vw, 1.75rem) * var(--ls));
         text-shadow: 0 0 8px rgba(204, 255, 0, 0.28);
       }
       .tourney-info {
         margin: 0;
-        font-size: clamp(0.9rem, 2.2vw, 1.1rem);
-        line-height: 1.55;
-        color: var(--muted);
+        font-size: calc(clamp(1.2rem, 3.1vw, 1.75rem) * var(--ls));
+        line-height: 1.45;
+        font-weight: 700;
+        color: #f5ffd1;
+        text-shadow: 0 0 8px rgba(204, 255, 0, 0.28);
         white-space: pre-wrap;
         word-break: break-word;
       }
@@ -800,7 +807,7 @@
                   "</span>" +
                   '<span class="prize-amount">' +
                   formatPrizeAmount(item.amount) +
-                  "원</span>" +
+                  "</span>" +
                   "</div>"
                 );
               })
@@ -813,7 +820,7 @@
           if (raw) return escapeHtml(raw).replace(/\n/g, "<br />");
           if (s.guaranteedPrize != null) {
             var n = Math.floor(Number(s.guaranteedPrize) || 0);
-            if (n > 0) return formatPrizeAmount(n) + " 원";
+            if (n > 0) return formatPrizeAmount(n);
           }
           return "—";
         }
@@ -1150,9 +1157,12 @@
             if (sec == null) {
               nextText = "—";
               placeholder = true;
+            } else if (sec <= 0) {
+              nextText = "CLOSER";
+              placeholder = false;
             } else {
               nextText = formatDurationHMS(sec);
-              placeholder = sec <= 0;
+              placeholder = false;
             }
           }
           if (lastUi[cacheId] === nextText && lastUi[cacheId + ":ph"] === placeholder) return;
@@ -1301,6 +1311,31 @@
           textIf("el-total-prize", displayTotalPrize(s));
           var info = (s.tournamentInfo && String(s.tournamentInfo).trim()) || "";
           textIf("el-tourney-info", info ? info : "—");
+          var stageLeft = $("stage-left");
+          if (stageLeft) {
+            var legacyLs =
+              s.leftFontScale != null ? Number(s.leftFontScale) : 1;
+            if (!Number.isFinite(legacyLs)) legacyLs = 1;
+            legacyLs = Math.min(2, Math.max(0.5, legacyLs));
+            var infoRaw =
+              s.infoFontScale != null ? Number(s.infoFontScale) : legacyLs;
+            var prizeRaw =
+              s.prizeFontScale != null ? Number(s.prizeFontScale) : legacyLs;
+            var infoFs = Number.isFinite(infoRaw)
+              ? Math.min(2, Math.max(0.5, infoRaw))
+              : legacyLs;
+            var prizeFs = Number.isFinite(prizeRaw)
+              ? Math.min(2, Math.max(0.5, prizeRaw))
+              : legacyLs;
+            if (lastUi.infoFontScale !== infoFs) {
+              lastUi.infoFontScale = infoFs;
+              stageLeft.style.setProperty("--info-font-scale", String(infoFs));
+            }
+            if (lastUi.prizeFontScale !== prizeFs) {
+              lastUi.prizeFontScale = prizeFs;
+              stageLeft.style.setProperty("--prize-font-scale", String(prizeFs));
+            }
+          }
 
           var maxLi = levels && levels.length ? levels.length - 1 : 0;
           var li = Math.max(0, Math.min(tn.levelIndex, maxLi));
