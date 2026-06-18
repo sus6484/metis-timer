@@ -542,10 +542,13 @@
   }
 
   function setActivePresetId(id) {
+    var prev = getActivePresetId();
     localStorage.setItem(STORAGE.ACTIVE_PRESET_ID, id);
     MetisTimer.setSyncPresetId(id);
     if (window.MetisSheetSync) {
-      MetisSheetSync.savePresetsToCloud(getPresets(), id);
+      MetisSheetSync.savePresetsToCloud(getPresets(), id, {
+        activePresetChanged: prev !== id,
+      });
     }
   }
 

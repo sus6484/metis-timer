@@ -33,6 +33,11 @@
   var cloudSyncLastErrorAt = 0;
   var cloudSyncStatusListeners = [];
 
+  /** 로컬 프리셋 전환 직후 클라우드 activePresetId가 되돌리는 것 방지 */
+  var pendingLocalActivePresetId = null;
+  var localActivePresetSwitchAt = 0;
+  var ACTIVE_PRESET_GUARD_MS = 5000;
+
   function getLastCloudUpdatedAt() {
     try {
       return Number(localStorage.getItem(STORAGE_CLOUD_UPDATED)) || 0;
@@ -51,6 +56,28 @@
     var n = Number(ts);
     if (!Number.isFinite(n) || n <= 0) return;
     if (n > getLastCloudUpdatedAt()) setLastCloudUpdatedAt(n);
+  }
+
+  function markLocalActivePresetSwitch(id) {
+    if (id == null || id === "") {
+      pendingLocalActivePresetId = null;
+      return;
+    }
+    pendingLocalActivePresetId = String(id);
+    localActivePresetSwitchAt = Date.now();
+    var ahead = Date.now();
+    if (ahead > getLastCloudUpdatedAt()) setLastCloudUpdatedAt(ahead);
+  }
+
+  function shouldGuardLocalActivePreset() {
+    if (pendingLocalActivePresetId) return true;
+    if (!localActivePresetSwitchAt) return false;
+    return Date.now() - localActivePresetSwitchAt < ACTIVE_PRESET_GUARD_MS;
+  }
+
+  function getGuardedLocalActivePresetId() {
+    if (!shouldGuardLocalActivePreset()) return "";
+    return pendingLocalActivePresetId || getActivePresetIdFromStorage();
   }
 
   /** 프리셋 내용이 실제로 바뀐 경우에만 덮어씀 (타이머 저장으로 인한 updatedAt 변화 무시) */
@@ -137,6 +164,7 @@
       !!options.skipActivePresetMutation || !!options.pinnedPresetId;
     if (
       !skipActive &&
+      !shouldGuardLocalActivePreset() &&
       data &&
       data.activePresetId != null &&
       String(data.activePresetId) !== ""
@@ -219,8 +247,14 @@
     var applyResult = emptyApplyResult();
     if (data && data.timerStates) {
       var applyOpts = {};
-      if (pinnedId) applyOpts.forcePresetId = pinnedId;
-      else applyOpts.activePresetId = data.activePresetId;
+      if (pinnedId) {
+        applyOpts.forcePresetId = pinnedId;
+      } else {
+        var guardedActive = getGuardedLocalActivePresetId();
+        applyOpts.activePresetId =
+          guardedActive ||
+          (data.activePresetId != null ? data.activePresetId : undefined);
+      }
       applyResult = applyTimerStatesFromCloud(data.timerStates, applyOpts);
     }
 
@@ -540,6 +574,7 @@
       })
       .then(function (data) {
         if (data && data.updatedAt) adoptCloudUpdatedAt(data.updatedAt);
+        if (data) pendingLocalActivePresetId = null;
         return data;
       })
       .catch(function (err) {
@@ -548,17 +583,25 @@
       });
   }
 
-  function savePresetsToCloud(presets, activePresetId) {
+  function savePresetsToCloud(presets, activePresetId, options) {
+    options = options || {};
+    var nextActive =
+      activePresetId != null && activePresetId !== ""
+        ? String(activePresetId)
+        : undefined;
+    if (options.activePresetChanged && nextActive) {
+      markLocalActivePresetSwitch(nextActive);
+    }
     pendingSave = {
       presets: presets,
-      activePresetId:
-        activePresetId != null ? String(activePresetId) : undefined,
+      activePresetId: nextActive,
     };
     if (saveTimer) clearTimeout(saveTimer);
+    var fastActivePush = !!(options.activePresetChanged && nextActive);
     saveTimer = setTimeout(function () {
       saveTimer = null;
       flushSave();
-    }, 400);
+    }, fastActivePush ? 80 : 400);
   }
 
   function loadScript(src) {
@@ -619,6 +662,7 @@
   global.MetisSheetSync = {
     ASSET_VERSION: CONFIG.assetVersion,
     assetUrl: assetUrl,
+    markLocalActivePresetSwitch: markLocalActivePresetSwitch,
     pullPresetsToLocal: pullPresetsToLocal,
     savePresetsToCloud: savePresetsToCloud,
     saveTimerStateToCloud: saveTimerStateToCloud,
