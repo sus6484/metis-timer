@@ -346,8 +346,11 @@
           state = buildInitialTimerState();
         }
         if (!state) continue;
+        var prevUpdatedAt = state.updatedAt;
         copyPresetMetadataIntoState(state, p);
-        state.updatedAt = Date.now();
+        if (prevUpdatedAt != null && Number.isFinite(Number(prevUpdatedAt))) {
+          state.updatedAt = prevUpdatedAt;
+        }
         localStorage.setItem(getSyncStorageKey(), JSON.stringify(state));
         if (p.id === savedActive || p.id === savedSyncId) {
           mirrorRemoteStorage(state);
