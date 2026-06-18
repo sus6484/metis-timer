@@ -1391,12 +1391,19 @@
           });
         }
 
+        function setClockDisplay(rem) {
+          var v = MetisTimer.formatMMSS(rem);
+          var el = $("el-clock");
+          if (el) el.textContent = v;
+          lastUi["el-clock"] = v;
+        }
+
         function renderView(step) {
           var s = step.state;
           var rem = step.rem;
           var tNow = typeof step.now === "number" ? step.now : Date.now();
 
-          textIf("el-clock", MetisTimer.formatMMSS(rem));
+          setClockDisplay(rem);
           textIf("el-title", s.tournamentName || "토너먼트");
 
           var levels = MetisTimer.getActiveLevels(s);
@@ -1794,25 +1801,33 @@
             var t = MetisTimer.normalizeTimer(s.timer || {}, s);
             s.timer = t;
             if (t.bridge && Number.isFinite(Number(t.bridge.until))) {
-              var curBridge = Math.max(0, Math.ceil((t.bridge.until - now) / 1000));
-              var nextBridge = Math.max(0, curBridge + deltaSec);
-              t.bridge.until = now + nextBridge * 1000;
-              s.displayTime = MetisTimer.formatMMSS(nextBridge);
+              t.bridge.until = Math.max(now, Number(t.bridge.until) + deltaSec * 1000);
+              var remBridge = MetisTimer.remainingSec(s, now);
+              s.displayTime = MetisTimer.formatMMSS(remBridge);
+              delete lastUi["el-clock"];
+              delete lastUi["break-remaining-top"];
+              prevBridgeSecExact = null;
               return;
             }
-            if (t.isRunning && t.endAt != null) {
-              var cur = Math.max(0, Math.ceil((t.endAt - now) / 1000));
-              var next = Math.max(0, cur + deltaSec);
-              t.endAt = now + next * 1000;
-              t.pausedRemainingSec = next;
-              s.displayTime = MetisTimer.formatMMSS(next);
+            if (t.isRunning) {
+              if (t.endAt == null || !Number.isFinite(t.endAt)) {
+                var bootRem = Math.max(0, Math.floor(t.pausedRemainingSec || 0));
+                t.endAt = now + bootRem * 1000;
+              }
+              t.endAt = Math.max(now, Number(t.endAt) + deltaSec * 1000);
+              t.pausedRemainingSec = MetisTimer.remainingSec(s, now);
             } else {
               var paused = Math.max(0, Math.floor(Number(t.pausedRemainingSec) || 0));
               var nextPaused = Math.max(0, paused + deltaSec);
+              t.endAt = null;
               t.pausedRemainingSec = nextPaused;
-              s.displayTime = MetisTimer.formatMMSS(nextPaused);
             }
+            s.displayTime = MetisTimer.formatMMSS(MetisTimer.remainingSec(s, now));
+            delete lastUi["el-clock"];
+            delete lastUi["break-remaining-top"];
+            prevLevelSecExact = null;
           });
+          tick();
         }
 
         function adjustLevel(delta) {

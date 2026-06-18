@@ -556,10 +556,10 @@
     var t = state.timer;
     if (!t) return 0;
     if (t.bridge && t.bridge.until != null && Number.isFinite(t.bridge.until)) {
-      return Math.max(0, Math.ceil((t.bridge.until - now) / 1000));
+      return Math.max(0, Math.floor((t.bridge.until - now) / 1000));
     }
-    if (t.isRunning && t.endAt != null) {
-      return Math.max(0, Math.ceil((t.endAt - now) / 1000));
+    if (t.isRunning && t.endAt != null && Number.isFinite(t.endAt)) {
+      return Math.max(0, Math.floor((t.endAt - now) / 1000));
     }
     return Math.max(0, Math.floor(t.pausedRemainingSec || 0));
   }
@@ -622,6 +622,12 @@
     var t = normalizeTimer(state.timer, state);
     state.timer = t;
     if (t.isRunning) {
+      if (t.endAt == null || !Number.isFinite(t.endAt)) {
+        var remFix = Math.max(0, Math.floor(t.pausedRemainingSec || 0));
+        if (remFix <= 0) remFix = levelDurationSec(levels[t.levelIndex]);
+        t.endAt = now + remFix * 1000;
+        t.pausedRemainingSec = remFix;
+      }
       syncLevelField(state);
       state.displayTime = formatMMSS(remainingSec(state, now));
       return state;

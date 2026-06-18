@@ -39,7 +39,10 @@
 
           <div id="remote-meta" class="remote-meta">
             <label class="remote-meta-field remote-meta-field--full">
-              <span class="remote-meta-label">대회명</span>
+              <div class="remote-meta-label-row">
+                <span class="remote-meta-label">대회명</span>
+                <span class="remote-meta-autosave-hint">자동 저장됨</span>
+              </div>
               <textarea
                 id="input-tournament-name"
                 rows="2"
@@ -47,19 +50,20 @@
                 placeholder="예: 경남미니토너먼트&#10;남포점"
               ></textarea>
             </label>
-            <label class="remote-meta-field remote-meta-field--full">
-              <span class="remote-meta-label">대회 정보 (INFO: 일시·장소·비고 등)</span>
-              <textarea id="input-tournament-info" rows="3" maxlength="600" placeholder="타이머 좌측 상단에 표시됩니다."></textarea>
+            <label class="remote-meta-field">
+              <div class="remote-meta-label-row">
+                <span class="remote-meta-label">대회정보</span>
+                <span class="remote-meta-autosave-hint">자동 저장됨</span>
+              </div>
+              <textarea
+                id="input-tournament-info"
+                rows="3"
+                maxlength="600"
+                placeholder="일시·장소·비고 등"
+              ></textarea>
             </label>
-            <label class="remote-meta-field remote-meta-field--full remote-meta-toggle-row" for="input-left-panel-rotate">
-              <input id="input-left-panel-rotate" type="checkbox" />
-              <span class="remote-meta-toggle-copy">
-                <span class="remote-meta-toggle-title">화면전환</span>
-                <span class="remote-meta-toggle-hint">5초마다 INFO·총상금 ↔ 상금목록 (상금 입력 시)</span>
-              </span>
-            </label>
-            <label class="remote-meta-field remote-meta-field--full" for="input-info-font-scale">
-              <span class="remote-meta-label">타이머 좌측 글자 크기 (INFO)</span>
+            <label class="remote-meta-field" for="input-info-font-scale">
+              <span class="remote-meta-label">대회정보 크기</span>
               <div class="remote-font-scale-row">
                 <input
                   id="input-info-font-scale"
@@ -75,14 +79,21 @@
                 <output id="output-info-font-scale" for="input-info-font-scale">100%</output>
               </div>
             </label>
-            <label class="remote-meta-field remote-meta-field--full">
-              <span class="remote-meta-label">등수별 상금 / GTD</span>
-              <button type="button" id="btn-open-prize-modal" class="btn-sm purple">
-                상금 스트럭처 수정
-              </button>
+            <label class="remote-meta-field remote-meta-toggle-row" for="input-left-panel-rotate">
+              <input id="input-left-panel-rotate" type="checkbox" />
+              <span class="remote-meta-toggle-copy">
+                <span class="remote-meta-toggle-title">화면전환</span>
+                <span class="remote-meta-toggle-hint">5초마다 INFO·총상금 ↔ 상금목록 (상금 입력 시)</span>
+              </span>
             </label>
-            <label class="remote-meta-field remote-meta-field--full" for="input-prize-font-scale">
-              <span class="remote-meta-label">타이머 좌측 글자 크기 (상금)</span>
+            <div class="remote-meta-field">
+              <span class="remote-meta-label">등수별 상금 수정</span>
+              <button type="button" id="btn-open-prize-modal" class="btn-sm purple remote-meta-action-btn">
+                상금 수정
+              </button>
+            </div>
+            <label class="remote-meta-field" for="input-prize-font-scale">
+              <span class="remote-meta-label">상금 크기</span>
               <div class="remote-font-scale-row">
                 <input
                   id="input-prize-font-scale"
@@ -98,8 +109,8 @@
                 <output id="output-prize-font-scale" for="input-prize-font-scale">100%</output>
               </div>
             </label>
-            <label class="remote-meta-field remote-meta-field--full">
-              <span class="remote-meta-label">총 상금 (TOTAL PRIZE)</span>
+            <label class="remote-meta-field">
+              <span class="remote-meta-label">총 상금</span>
               <input id="input-total-prize" type="text" maxlength="120" placeholder="예: 15,000,000" />
             </label>
           </div>
@@ -375,6 +386,8 @@
         </div>
       </div>
     </div>
+
+    <div id="save-toast" class="save-toast" role="status" aria-live="polite" hidden></div>
 
     <script src="timer-core.js"></script>
     <script src="metis-sheet-sync.js"></script>

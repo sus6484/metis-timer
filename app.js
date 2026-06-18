@@ -564,6 +564,22 @@
     MetisTimer.writeSyncState(buildFullSync());
   }
 
+  var saveToastTimer = null;
+  function showSaveToast(message) {
+    var el = document.getElementById("save-toast");
+    if (!el) return;
+    el.textContent = message || "저장되었습니다.";
+    el.hidden = false;
+    el.classList.add("is-visible");
+    if (saveToastTimer) clearTimeout(saveToastTimer);
+    saveToastTimer = setTimeout(function () {
+      el.classList.remove("is-visible");
+      saveToastTimer = setTimeout(function () {
+        el.hidden = true;
+      }, 280);
+    }, 2400);
+  }
+
   function pushToTimerBroadcast() {
     persistAll();
   }
@@ -902,6 +918,7 @@
     }
     renderRemote();
     closePrizeModal();
+    showSaveToast("상금 스트럭처가 저장되었습니다.");
   }
 
   function ensurePrizeSortable() {
@@ -1708,6 +1725,9 @@
     closeModal();
     renderPresets();
     persistAll();
+    showSaveToast(
+      editingPresetId ? "프리셋이 저장되었습니다." : "새 프리셋이 추가되었습니다."
+    );
   }
 
   function doStart() {
