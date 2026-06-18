@@ -530,6 +530,110 @@
     return out;
   }
 
+  /**
+   * 클라우드 타이머 동기화용 실시간 필드.
+   * 대회명·상금 등 정적 메타데이터(presets)는 제외한다.
+   */
+  var TIMER_SYNC_KEYS = [
+    "activePresetId",
+    "timer",
+    "player",
+    "entry",
+    "entryChips",
+    "timerStatus",
+    "displayTime",
+    "level",
+    "hasStartedOnce",
+    "pendingBridge",
+    "regCloseAt",
+    "totalScheduleCommittedSec",
+    "updatedAt",
+  ];
+
+  function copyPendingBridgeForSync(pb) {
+    if (!pb || typeof pb !== "object") return null;
+    return {
+      kind: pb.kind,
+      remainingSec: Math.max(0, Math.floor(Number(pb.remainingSec) || 0)),
+    };
+  }
+
+  /**
+   * 전체 sync state에서 클라우드에 올릴 슬라이스만 추출한다.
+   * @param {object} state - readSyncState() 결과
+   * @param {string} [presetId] - 생략 시 state.activePresetId 사용
+   */
+  function pickTimerSyncSlice(state, presetId) {
+    var out = {};
+    if (!state || typeof state !== "object") return out;
+    var pid =
+      presetId != null && presetId !== ""
+        ? String(presetId)
+        : state.activePresetId != null
+          ? String(state.activePresetId)
+          : "";
+    if (pid) out.presetId = pid;
+    for (var i = 0; i < TIMER_SYNC_KEYS.length; i++) {
+      var k = TIMER_SYNC_KEYS[i];
+      if (state[k] === undefined) continue;
+      if (k === "timer") {
+        out.timer = normalizeTimer(state.timer, state);
+      } else if (k === "pendingBridge") {
+        out.pendingBridge = copyPendingBridgeForSync(state.pendingBridge);
+      } else if (k === "hasStartedOnce") {
+        out.hasStartedOnce = !!state.hasStartedOnce;
+      } else {
+        out[k] = state[k];
+      }
+    }
+    var u = Number(out.updatedAt);
+    if (!Number.isFinite(u) || u <= 0) out.updatedAt = Date.now();
+    return out;
+  }
+
+  function timerSyncUpdatedAt(slice) {
+    if (!slice) return 0;
+    var n = Number(slice.updatedAt);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  /** cloudSlice가 localSlice보다 최신이면 true (충돌 해결용) */
+  function isTimerSyncSliceNewer(cloudSlice, localSlice) {
+    return timerSyncUpdatedAt(cloudSlice) > timerSyncUpdatedAt(localSlice);
+  }
+
+  /**
+   * 클라우드 슬라이스를 로컬 state에 병합한다. cloud가 더 최신일 때만 적용.
+   * @returns {boolean} 변경 여부
+   */
+  function applyTimerSyncSlice(state, cloudSlice) {
+    if (!state || !cloudSlice || typeof cloudSlice !== "object") return false;
+    var localSlice = pickTimerSyncSlice(state);
+    if (!isTimerSyncSliceNewer(cloudSlice, localSlice)) return false;
+    for (var i = 0; i < TIMER_SYNC_KEYS.length; i++) {
+      var k = TIMER_SYNC_KEYS[i];
+      if (cloudSlice[k] === undefined) continue;
+      if (k === "timer") {
+        state.timer = normalizeTimer(cloudSlice.timer, state);
+      } else if (k === "pendingBridge") {
+        state.pendingBridge = copyPendingBridgeForSync(cloudSlice.pendingBridge);
+      } else if (k === "activePresetId") {
+        state.activePresetId = String(cloudSlice.activePresetId);
+      } else if (k === "hasStartedOnce") {
+        state.hasStartedOnce = !!cloudSlice.hasStartedOnce;
+      } else {
+        state[k] = cloudSlice[k];
+      }
+    }
+    if (cloudSlice.presetId && !state.activePresetId) {
+      state.activePresetId = String(cloudSlice.presetId);
+    }
+    syncLevelField(state);
+    ensureTotalSecondsState(state);
+    state.displayTime = formatMMSS(remainingSec(state, Date.now()));
+    return true;
+  }
+
   function mirrorRemoteStorage(state) {
     try {
       localStorage.setItem(
@@ -543,7 +647,7 @@
     options = options || {};
     mergePresetsIntoState(state);
     if (!options.skipPresetEmbed) embedActivePresetTournament(state);
-    state.updatedAt = Date.now();
+    if (!options.preserveUpdatedAt) state.updatedAt = Date.now();
     var str = JSON.stringify(state);
     localStorage.setItem(getSyncStorageKey(), str);
     mirrorRemoteStorage(state);
@@ -551,6 +655,21 @@
       try {
         bc.postMessage({ type: "sync", t: state.updatedAt });
       } catch (e) {}
+    }
+    if (
+      !options.skipCloudPush &&
+      global.MetisSheetSync &&
+      typeof global.MetisSheetSync.saveTimerStateToCloud === "function"
+    ) {
+      var pushPresetId =
+        syncPresetId ||
+        (state.activePresetId != null ? String(state.activePresetId) : "");
+      if (pushPresetId) {
+        global.MetisSheetSync.saveTimerStateToCloud(
+          pushPresetId,
+          pickTimerSyncSlice(state, pushPresetId)
+        );
+      }
     }
   }
 
@@ -1058,6 +1177,11 @@
     getTotalSeconds: getTotalSeconds,
     engineStep: engineStep,
     pickRemoteSlice: pickRemoteSlice,
+    TIMER_SYNC_KEYS: TIMER_SYNC_KEYS,
+    pickTimerSyncSlice: pickTimerSyncSlice,
+    applyTimerSyncSlice: applyTimerSyncSlice,
+    timerSyncUpdatedAt: timerSyncUpdatedAt,
+    isTimerSyncSliceNewer: isTimerSyncSliceNewer,
     syncAllPresetsMetadataFromStorage: syncAllPresetsMetadataFromStorage,
     recoverPresetsMetadataFromTimerStates: recoverPresetsMetadataFromTimerStates,
     mergePresetLists: mergePresetLists,

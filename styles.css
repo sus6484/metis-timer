@@ -236,6 +236,59 @@ input {
   letter-spacing: 0.04em;
 }
 
+.cloud-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+
+.cloud-sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #64748b;
+  flex-shrink: 0;
+}
+
+.cloud-sync-badge[data-state="synced"] .cloud-sync-dot {
+  background: #22c55e;
+}
+
+.cloud-sync-badge[data-state="syncing"] .cloud-sync-dot {
+  background: #eab308;
+  animation: cloud-sync-pulse 1s ease-in-out infinite;
+}
+
+.cloud-sync-badge[data-state="offline"] .cloud-sync-dot {
+  background: #ef4444;
+}
+
+.cloud-sync-badge[data-state="idle"] .cloud-sync-dot {
+  background: #64748b;
+}
+
+@keyframes cloud-sync-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.timer-banner .cloud-sync-badge {
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .grid-stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

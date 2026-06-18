@@ -508,12 +508,10 @@
     var list = getPresets().slice();
     list.push(preset);
     savePresets(list);
-    setActivePresetId(preset.id);
     renderPresets();
-    alignTimerToCurrentLevel();
-    persistAll();
-    renderRemote();
-    alert('프리셋 "' + preset.name + '" 을(를) 가져왔습니다.');
+    activatePreset(preset.id).then(function () {
+      alert('프리셋 "' + preset.name + '" 을(를) 가져왔습니다.');
+    });
   }
 
   function getActivePresetId() {
@@ -522,9 +520,26 @@
 
   function setActivePresetId(id) {
     localStorage.setItem(STORAGE.ACTIVE_PRESET_ID, id);
+    MetisTimer.setSyncPresetId(id);
     if (window.MetisSheetSync) {
       MetisSheetSync.savePresetsToCloud(getPresets(), id);
     }
+  }
+
+  /** 프리셋 전환: 클라우드 타이머 상태 pull 후 리모트·로컬 동기화 */
+  function activatePreset(id) {
+    mergeRemoteIntoActivePreset();
+    setActivePresetId(id);
+    if (presetSelect) presetSelect.value = id;
+    var pull =
+      window.MetisSheetSync && MetisSheetSync.pullAndApplyPresetTimerState
+        ? MetisSheetSync.pullAndApplyPresetTimerState(id)
+        : Promise.resolve();
+    return pull.then(function () {
+      remoteState = getRemote();
+      persistAll();
+      renderRemote();
+    });
   }
 
   function uid() {
@@ -736,6 +751,32 @@
 
   var remoteEngineId = null;
   var lastRemoteSeenUpdated = 0;
+  var cloudTimerSyncStarted = false;
+
+  function startCloudTimerSyncIfNeeded() {
+    if (cloudTimerSyncStarted || !window.MetisSheetSync) return;
+    cloudTimerSyncStarted = true;
+    if (MetisSheetSync.bindCloudSyncBadge) {
+      MetisSheetSync.bindCloudSyncBadge("cloud-sync-badge");
+    }
+    MetisSheetSync.startCloudTimerSync(function (result) {
+      var ar =
+        result && result.applyResult
+          ? result.applyResult
+          : { activePresetChanged: false };
+      MetisTimer.setSyncPresetId(getActivePresetId());
+      if (ar.activePresetChanged && presetSelect) {
+        presetSelect.value = getActivePresetId();
+      }
+      var s = MetisTimer.readSyncState();
+      if (!s) return;
+      if ((s.updatedAt || 0) > lastRemoteSeenUpdated) {
+        lastRemoteSeenUpdated = s.updatedAt;
+        remoteState = getRemote();
+        if (screenRemote.classList.contains("is-active")) renderRemote();
+      }
+    });
+  }
 
   function syncLastSeenFromStore() {
     MetisTimer.setSyncPresetId(getActivePresetId());
@@ -790,6 +831,7 @@
       renderPresets();
       persistAll();
       syncLastSeenFromStore();
+      startCloudTimerSyncIfNeeded();
     } else {
       authError.textContent = "비밀번호가 올바르지 않습니다.";
       clearPin();
@@ -1283,13 +1325,7 @@
       var cell = tr.querySelector(".preset-actions");
       cell.appendChild(
         mkBtn("적용", "blue", function () {
-          mergeRemoteIntoActivePreset();
-          setActivePresetId(p.id);
-          presetSelect.value = p.id;
-          remoteState = getRemote();
-          alignTimerToCurrentLevel();
-          persistAll();
-          renderRemote();
+          activatePreset(p.id);
         })
       );
       cell.appendChild(
@@ -1876,12 +1912,7 @@
   bindMetaFormOnce();
 
   presetSelect.addEventListener("change", function () {
-    mergeRemoteIntoActivePreset();
-    setActivePresetId(presetSelect.value);
-    remoteState = getRemote();
-    alignTimerToCurrentLevel();
-    persistAll();
-    renderRemote();
+    activatePreset(presetSelect.value);
   });
 
   btnPresetAdd.addEventListener("click", openModalNew);
@@ -2036,6 +2067,7 @@
         MetisSheetSync.savePresetsToCloud(getPresets(), getActivePresetId());
       }
       syncLastSeenFromStore();
+      startCloudTimerSyncIfNeeded();
     } else {
       showScreen("auth");
       requestAnimationFrame(function () {

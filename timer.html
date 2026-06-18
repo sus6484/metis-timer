@@ -609,9 +609,28 @@
         background: #dc2626;
         min-width: 58px;
       }
+      .cloud-sync-badge {
+        position: fixed;
+        top: max(10px, env(safe-area-inset-top, 0px));
+        right: max(10px, env(safe-area-inset-right, 0px));
+        z-index: 60;
+        pointer-events: none;
+        backdrop-filter: blur(6px);
+        background: rgba(0, 0, 0, 0.55);
+      }
     </style>
   </head>
   <body>
+    <div
+      id="cloud-sync-badge"
+      class="cloud-sync-badge"
+      data-state="idle"
+      aria-live="polite"
+      title="클라우드 동기화"
+    >
+      <span class="cloud-sync-dot" aria-hidden="true"></span>
+      <span class="cloud-sync-label">대기</span>
+    </div>
     <div id="pause-overlay" class="timer-pause-overlay" aria-hidden="true">
       <div class="timer-pause-overlay-label" aria-live="polite">Ⅱ PAUSED</div>
     </div>
@@ -1975,6 +1994,32 @@
         MetisTimer.subscribeSync(refreshFromBroadcast);
         window.addEventListener("storage", refreshFromBroadcast);
 
+        if (window.MetisSheetSync && MetisSheetSync.startCloudTimerSync) {
+          var pinnedPresetId = MetisTimer.getSyncPresetId
+            ? MetisTimer.getSyncPresetId()
+            : window.__METIS_TIMER_PRESET_ID || "";
+          MetisSheetSync.startCloudTimerSync(
+            function (result) {
+              var ar =
+                result && result.applyResult
+                  ? result.applyResult
+                  : { leveledUp: false, activePresetChanged: false };
+              refreshFromBroadcast();
+              if (ar.leveledUp) {
+                suppressSkipCreditOnce = true;
+                resetTransitionCues();
+                playTransitionDoorong();
+                prevLevelSecExact = null;
+              }
+              tick();
+            },
+            pinnedPresetId ? { pinnedPresetId: pinnedPresetId } : null
+          );
+        }
+        if (window.MetisSheetSync && MetisSheetSync.bindCloudSyncBadge) {
+          MetisSheetSync.bindCloudSyncBadge("cloud-sync-badge");
+        }
+
         function clearHb() {
           try {
             localStorage.removeItem(MetisTimer.HEARTBEAT_KEY);
@@ -1990,6 +2035,9 @@
         window.addEventListener("pagehide", function () {
           clearHb();
           clearLeftCarousel();
+          if (window.MetisSheetSync && MetisSheetSync.stopCloudTimerSync) {
+            MetisSheetSync.stopCloudTimerSync();
+          }
         });
 
         tick();

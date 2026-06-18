@@ -32,6 +32,16 @@
         <div class="remote-body">
           <div class="timer-banner">
             <span id="timer-status" class="timer-status">대기중</span>
+            <div
+              id="cloud-sync-badge"
+              class="cloud-sync-badge"
+              data-state="idle"
+              aria-live="polite"
+              title="클라우드 동기화"
+            >
+              <span class="cloud-sync-dot" aria-hidden="true"></span>
+              <span class="cloud-sync-label">대기</span>
+            </div>
             <span id="timer-clock" class="timer-clock">00:00</span>
           </div>
 
