@@ -8,10 +8,12 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbwEr9geWitJJG2bHHV-w1DGCZh3MhvzibcNP4Nym5yNnZ4hJnruSshvk3ATMqPCX8gHpQ/exec",
     token: "metis_secret_444444",
+    assetVersion: "20260619",
   };
 
   var STORAGE_PRESETS = "metis_blindPresets";
   var STORAGE_ACTIVE = "metis_activePresetId";
+  var STORAGE_CLOUD_UPDATED = "metis_lastCloudUpdatedAt";
 
   var pullPromise = null;
   var saveTimer = null;
@@ -31,93 +33,41 @@
   var cloudSyncLastErrorAt = 0;
   var cloudSyncStatusListeners = [];
 
-  var METADATA_KEYS = [
-    "tournamentName",
-    "totalPrizeText",
-    "tournamentInfo",
-    "prizeText",
-    "prizeItems",
-    "infoFontScale",
-    "prizeFontScale",
-    "leftPanelRotate",
-  ];
-
-  function isMetadataEmpty(key, val) {
-    if (val === undefined || val === null) return true;
-    if (key === "prizeItems") return !Array.isArray(val) || val.length === 0;
-    if (typeof val === "string") return !val.trim();
-    return false;
-  }
-
-  function mergeMetadataPreferNonEmpty(target, source) {
-    if (!target || !source) return target;
-    for (var i = 0; i < METADATA_KEYS.length; i++) {
-      var k = METADATA_KEYS[i];
-      if (source[k] === undefined || isMetadataEmpty(k, source[k])) continue;
-      target[k] =
-        k === "prizeItems" && Array.isArray(source[k])
-          ? source[k].slice()
-          : source[k];
-    }
-    return target;
-  }
-
-  function mergePresetListsLocal(localList, cloudList) {
-    if (global.MetisTimer && global.MetisTimer.mergePresetLists) {
-      return global.MetisTimer.mergePresetLists(localList, cloudList);
-    }
-    localList = Array.isArray(localList) ? localList : [];
-    cloudList = Array.isArray(cloudList) ? cloudList : [];
-    if (!cloudList.length) return localList.length ? localList : cloudList;
-    var localById = {};
-    localList.forEach(function (p) {
-      if (p && p.id) localById[p.id] = p;
-    });
-    var out = [];
-    var seen = {};
-    cloudList.forEach(function (cloudP) {
-      if (!cloudP || !cloudP.id) return;
-      seen[cloudP.id] = true;
-      var merged = Object.assign({}, cloudP);
-      mergeMetadataPreferNonEmpty(merged, localById[cloudP.id]);
-      out.push(merged);
-    });
-    localList.forEach(function (localP) {
-      if (!localP || !localP.id || seen[localP.id]) return;
-      out.push(localP);
-    });
-    return out.length ? out : cloudList;
-  }
-
-  function cloudHasWeakerMetadataThanLocal(cloudData) {
-    var localList = [];
+  function getLastCloudUpdatedAt() {
     try {
-      var raw = localStorage.getItem(STORAGE_PRESETS);
-      if (raw) {
-        var parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) localList = parsed;
-      }
+      return Number(localStorage.getItem(STORAGE_CLOUD_UPDATED)) || 0;
     } catch (e0) {
-      return false;
+      return 0;
     }
-    var cloudList = cloudData && cloudData.presets;
-    if (!Array.isArray(cloudList)) return false;
-    var cloudById = {};
-    cloudList.forEach(function (p) {
-      if (p && p.id) cloudById[p.id] = p;
-    });
-    for (var i = 0; i < localList.length; i++) {
-      var localP = localList[i];
-      if (!localP || !localP.id) continue;
-      var cloudP = cloudById[localP.id] || {};
-      for (var j = 0; j < METADATA_KEYS.length; j++) {
-        var k = METADATA_KEYS[j];
-        if (!isMetadataEmpty(k, localP[k]) && isMetadataEmpty(k, cloudP[k])) {
-          return true;
-        }
-      }
-    }
-    return false;
+  }
+
+  function setLastCloudUpdatedAt(ts) {
+    try {
+      localStorage.setItem(STORAGE_CLOUD_UPDATED, String(ts));
+    } catch (e1) {}
+  }
+
+  function adoptCloudUpdatedAt(ts) {
+    var n = Number(ts);
+    if (!Number.isFinite(n) || n <= 0) return;
+    if (n > getLastCloudUpdatedAt()) setLastCloudUpdatedAt(n);
+  }
+
+  /** 클라우드 updatedAt이 로컬보다 최신이면 프리셋 전체를 받아야 함 */
+  function shouldApplyCloudPresets(data) {
+    if (!data || !Array.isArray(data.presets) || !data.presets.length) return false;
+    var cloudU = Number(data.updatedAt) || 0;
+    var localU = getLastCloudUpdatedAt();
+    return cloudU > localU || localU === 0;
+  }
+
+  function assetUrl(path) {
+    var v =
+      (global.__METIS_ASSET_V != null && String(global.__METIS_ASSET_V)) ||
+      CONFIG.assetVersion ||
+      "1";
+    if (!path || path.indexOf("?") >= 0) return path;
+    return path + "?v=" + encodeURIComponent(v);
   }
 
   function pushLocalPresetsToCloud() {
@@ -132,27 +82,58 @@
     } catch (e1) {}
   }
 
-  function applyToLocal(data) {
-    if (!data || typeof data !== "object") return false;
-    var changed = false;
+  /** 클라우드가 최신일 때 로컬 프리셋을 통째로 덮어씀 (병합 없음) */
+  function applyCloudPresetsIfNewer(data, options) {
+    options = options || {};
+    var result = { applied: false, activePresetChanged: false };
+    if (!shouldApplyCloudPresets(data)) return result;
+
     if (Array.isArray(data.presets) && data.presets.length > 0) {
-      var localList = [];
-      try {
-        var raw = localStorage.getItem(STORAGE_PRESETS);
-        if (raw) {
-          var parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) localList = parsed;
+      localStorage.setItem(STORAGE_PRESETS, JSON.stringify(data.presets));
+      result.applied = true;
+    }
+
+    var skipActive =
+      !!options.skipActivePresetMutation || !!options.pinnedPresetId;
+    if (
+      !skipActive &&
+      data.activePresetId != null &&
+      String(data.activePresetId) !== ""
+    ) {
+      var nextActive = String(data.activePresetId);
+      var curActive = getActivePresetIdFromStorage();
+      if (curActive !== nextActive) {
+        result.activePresetChanged = true;
+        localStorage.setItem(STORAGE_ACTIVE, nextActive);
+        if (global.MetisTimer && global.MetisTimer.setSyncPresetId) {
+          global.MetisTimer.setSyncPresetId(nextActive);
         }
-      } catch (e0) {}
-      var merged = mergePresetListsLocal(localList, data.presets);
-      localStorage.setItem(STORAGE_PRESETS, JSON.stringify(merged));
-      changed = true;
+      }
     }
-    if (data.activePresetId != null && String(data.activePresetId) !== "") {
-      localStorage.setItem(STORAGE_ACTIVE, String(data.activePresetId));
-      changed = true;
+
+    adoptCloudUpdatedAt(data.updatedAt);
+
+    if (
+      result.applied &&
+      global.MetisTimer &&
+      global.MetisTimer.syncAllPresetsMetadataFromStorage
+    ) {
+      global.MetisTimer.syncAllPresetsMetadataFromStorage();
     }
-    return changed;
+
+    return result;
+  }
+
+  /** 이 기기가 클라우드보다 앞서 있을 때만 업로드 (역주행 push 차단) */
+  function maybePushLocalIfAheadOfCloud(data) {
+    if (!data) return;
+    var cloudU = Number(data.updatedAt) || 0;
+    var localU = getLastCloudUpdatedAt();
+    if (localU > cloudU) pushLocalPresetsToCloud();
+  }
+
+  function applyToLocal(data) {
+    return applyCloudPresetsIfNewer(data, {}).applied;
   }
 
   function getActivePresetIdFromStorage() {
@@ -183,6 +164,42 @@
       prevLevelIndex: 0,
       newLevelIndex: 0,
       activePresetChanged: false,
+      presetsApplied: false,
+    };
+  }
+
+  function processCloudFetchData(data, pollOptions) {
+    pollOptions = pollOptions || cloudPollOptions || {};
+    var pinnedId =
+      pollOptions.pinnedPresetId != null && String(pollOptions.pinnedPresetId) !== ""
+        ? String(pollOptions.pinnedPresetId)
+        : "";
+    var skipActiveMutation =
+      !!pollOptions.skipActivePresetMutation || !!pinnedId;
+
+    lastCloudPullData = data;
+    var presetResult = applyCloudPresetsIfNewer(data, {
+      skipActivePresetMutation: skipActiveMutation,
+      pinnedPresetId: pinnedId,
+    });
+    maybePushLocalIfAheadOfCloud(data);
+
+    var applyResult = emptyApplyResult();
+    if (data && data.timerStates) {
+      var applyOpts = {};
+      if (pinnedId) applyOpts.forcePresetId = pinnedId;
+      else applyOpts.activePresetId = data.activePresetId;
+      applyResult = applyTimerStatesFromCloud(data.timerStates, applyOpts);
+    }
+    applyResult.activePresetChanged =
+      presetResult.activePresetChanged || applyResult.activePresetChanged;
+    applyResult.presetsApplied = presetResult.applied;
+
+    return {
+      data: data,
+      applyResult: applyResult,
+      presetsApplied: presetResult.applied,
+      applied: applyResult.applied || presetResult.applied,
     };
   }
 
@@ -318,6 +335,7 @@
       })
       .then(function (data) {
         setCloudSyncPhase("ok");
+        if (data && data.updatedAt) adoptCloudUpdatedAt(data.updatedAt);
         return data;
       })
       .catch(function (err) {
@@ -353,12 +371,6 @@
 
   function pollTimerStatesFromCloud(pollOptions) {
     pollOptions = pollOptions || cloudPollOptions || {};
-    var pinnedId =
-      pollOptions.pinnedPresetId != null && String(pollOptions.pinnedPresetId) !== ""
-        ? String(pollOptions.pinnedPresetId)
-        : "";
-    var skipActiveMutation =
-      !!pollOptions.skipActivePresetMutation || !!pinnedId;
 
     setCloudSyncPhase("syncing");
     return fetch(CONFIG.url, { method: "GET", cache: "no-store" })
@@ -368,41 +380,19 @@
       })
       .then(function (data) {
         lastCloudPullData = data;
-        var activePresetChanged = false;
-        if (
-          !skipActiveMutation &&
-          data &&
-          data.activePresetId != null &&
-          String(data.activePresetId) !== ""
-        ) {
-          var nextActive = String(data.activePresetId);
-          var curActive = getActivePresetIdFromStorage();
-          if (curActive !== nextActive) {
-            activePresetChanged = true;
-            localStorage.setItem(STORAGE_ACTIVE, nextActive);
-            if (global.MetisTimer && global.MetisTimer.setSyncPresetId) {
-              global.MetisTimer.setSyncPresetId(nextActive);
-            }
-          }
-        }
-        var applyResult = emptyApplyResult();
-        if (data && data.timerStates) {
-          var applyOpts = {};
-          if (pinnedId) {
-            applyOpts.forcePresetId = pinnedId;
-          } else {
-            applyOpts.activePresetId = data.activePresetId;
-          }
-          applyResult = applyTimerStatesFromCloud(data.timerStates, applyOpts);
-        }
-        applyResult.activePresetChanged = activePresetChanged;
+        var result = processCloudFetchData(data, pollOptions);
         setCloudSyncPhase("ok");
-        return { data: data, applyResult: applyResult, applied: applyResult.applied };
+        return result;
       })
       .catch(function (err) {
         console.warn("[MetisSheetSync] 타이머 클라우드 불러오기 실패:", err);
         setCloudSyncPhase("error");
-        return { data: null, applyResult: emptyApplyResult(), applied: false };
+        return {
+          data: null,
+          applyResult: emptyApplyResult(),
+          presetsApplied: false,
+          applied: false,
+        };
       });
   }
 
@@ -419,7 +409,10 @@
         return res.json();
       })
       .then(function (data) {
-        lastCloudPullData = data;
+        processCloudFetchData(data, {
+          skipActivePresetMutation: true,
+          pinnedPresetId: String(presetId),
+        });
         var applyResult = emptyApplyResult();
         if (data && data.timerStates) {
           applyResult = applyTimerStatesFromCloud(data.timerStates, {
@@ -445,7 +438,12 @@
         .then(function (result) {
           if (!result || typeof cloudPollOnApplied !== "function") return;
           var ar = result.applyResult || emptyApplyResult();
-          if (result.applied || ar.activePresetChanged || ar.leveledUp) {
+          if (
+            result.applied ||
+            result.presetsApplied ||
+            ar.activePresetChanged ||
+            ar.leveledUp
+          ) {
             cloudPollOnApplied(result);
           }
         })
@@ -480,25 +478,7 @@
         return res.json();
       })
       .then(function (data) {
-        lastCloudPullData = data;
-        applyToLocal(data);
-        var recovered = false;
-        if (global.MetisTimer) {
-          if (global.MetisTimer.recoverPresetsMetadataFromTimerStates) {
-            recovered = !!global.MetisTimer.recoverPresetsMetadataFromTimerStates();
-          }
-          if (global.MetisTimer.syncAllPresetsMetadataFromStorage) {
-            global.MetisTimer.syncAllPresetsMetadataFromStorage();
-          }
-        }
-        if (recovered || cloudHasWeakerMetadataThanLocal(data)) {
-          pushLocalPresetsToCloud();
-        }
-        if (data && data.timerStates) {
-          applyTimerStatesFromCloud(data.timerStates, {
-            activePresetId: data.activePresetId,
-          });
-        }
+        processCloudFetchData(data, {});
         return data;
       })
       .catch(function (err) {
@@ -525,6 +505,10 @@
         if (!res.ok) throw new Error("POST failed: " + res.status);
         return res.json();
       })
+      .then(function (data) {
+        if (data && data.updatedAt) adoptCloudUpdatedAt(data.updatedAt);
+        return data;
+      })
       .catch(function (err) {
         console.warn("[MetisSheetSync] 클라우드 저장 실패:", err);
         return null;
@@ -547,7 +531,7 @@
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
       var s = document.createElement("script");
-      s.src = src;
+      s.src = assetUrl(src);
       s.async = false;
       s.onload = function () {
         resolve();
@@ -570,15 +554,8 @@
         return loadScript("timer-core.js");
       })
       .then(function () {
-        var recovered = false;
-        if (window.MetisTimer && window.MetisTimer.recoverPresetsMetadataFromTimerStates) {
-          recovered = !!window.MetisTimer.recoverPresetsMetadataFromTimerStates();
-        }
-        if (window.MetisTimer && window.MetisTimer.syncAllPresetsMetadataFromStorage) {
-          window.MetisTimer.syncAllPresetsMetadataFromStorage();
-        }
-        if (recovered || cloudHasWeakerMetadataThanLocal(lastCloudPullData)) {
-          pushLocalPresetsToCloud();
+        if (global.MetisTimer && global.MetisTimer.syncAllPresetsMetadataFromStorage) {
+          global.MetisTimer.syncAllPresetsMetadataFromStorage();
         }
         if (lastCloudPullData && lastCloudPullData.timerStates) {
           var bootPresetId =
@@ -607,12 +584,15 @@
   }
 
   global.MetisSheetSync = {
+    ASSET_VERSION: CONFIG.assetVersion,
+    assetUrl: assetUrl,
     pullPresetsToLocal: pullPresetsToLocal,
     savePresetsToCloud: savePresetsToCloud,
     saveTimerStateToCloud: saveTimerStateToCloud,
     pollTimerStatesFromCloud: pollTimerStatesFromCloud,
     pullAndApplyPresetTimerState: pullAndApplyPresetTimerState,
     applyTimerStatesFromCloud: applyTimerStatesFromCloud,
+    applyCloudPresetsIfNewer: applyCloudPresetsIfNewer,
     startCloudTimerSync: startCloudTimerSync,
     stopCloudTimerSync: stopCloudTimerSync,
     getCloudSyncStatus: getCloudSyncStatus,
@@ -620,7 +600,7 @@
     bindCloudSyncBadge: bindCloudSyncBadge,
     applyToLocal: applyToLocal,
     bootTimerPage: bootTimerPage,
-    cloudHasWeakerMetadataThanLocal: cloudHasWeakerMetadataThanLocal,
+    getLastCloudUpdatedAt: getLastCloudUpdatedAt,
     getLastCloudPullData: function () {
       return lastCloudPullData;
     },

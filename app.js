@@ -765,13 +765,16 @@
           ? result.applyResult
           : { activePresetChanged: false };
       MetisTimer.setSyncPresetId(getActivePresetId());
+      if (result && result.presetsApplied) {
+        renderPresets();
+      }
       if (ar.activePresetChanged && presetSelect) {
         presetSelect.value = getActivePresetId();
       }
       var s = MetisTimer.readSyncState();
       if (!s) return;
-      if ((s.updatedAt || 0) > lastRemoteSeenUpdated) {
-        lastRemoteSeenUpdated = s.updatedAt;
+      if ((s.updatedAt || 0) > lastRemoteSeenUpdated || result.presetsApplied) {
+        lastRemoteSeenUpdated = s.updatedAt || lastRemoteSeenUpdated;
         remoteState = getRemote();
         if (screenRemote.classList.contains("is-active")) renderRemote();
       }
@@ -2043,10 +2046,6 @@
 
   function startAppAfterCloudSync() {
     hydrateAllPresetTournaments();
-    var recovered = false;
-    if (MetisTimer.recoverPresetsMetadataFromTimerStates) {
-      recovered = !!MetisTimer.recoverPresetsMetadataFromTimerStates();
-    }
     if (MetisTimer.syncAllPresetsMetadataFromStorage) {
       MetisTimer.syncAllPresetsMetadataFromStorage();
     }
@@ -2056,16 +2055,6 @@
       renderRemote();
       renderPresets();
       persistAll();
-      if (
-        window.MetisSheetSync &&
-        (recovered ||
-          (MetisSheetSync.cloudHasWeakerMetadataThanLocal &&
-            MetisSheetSync.cloudHasWeakerMetadataThanLocal(
-              MetisSheetSync.getLastCloudPullData && MetisSheetSync.getLastCloudPullData()
-            )))
-      ) {
-        MetisSheetSync.savePresetsToCloud(getPresets(), getActivePresetId());
-      }
       syncLastSeenFromStore();
       startCloudTimerSyncIfNeeded();
     } else {
