@@ -189,8 +189,8 @@
       }
     }
     if (idx < 0) return;
-    for (var j = 0; j < PRESET_EMBED_KEYS.length; j++) {
-      var key = PRESET_EMBED_KEYS[j];
+    for (var j = 0; j < PRESET_METADATA_ONLY_KEYS.length; j++) {
+      var key = PRESET_METADATA_ONLY_KEYS[j];
       if (state[key] !== undefined) presets[idx][key] = state[key];
     }
     savePresetsToStorage(presets);
@@ -224,20 +224,47 @@
     return state;
   }
 
-  /** 클라우드 프리셋 → 로컬 timer_state_* (대회정보·상금 등 메타데이터) */
+  /** 클라우드 프리셋 → 로컬 timer_state_* (대회정보·상금 등 정적 메타데이터만) */
   function copyPresetMetadataIntoState(state, preset) {
     if (!state || !preset) return state;
-    for (var j = 0; j < PRESET_EMBED_KEYS.length; j++) {
-      var key = PRESET_EMBED_KEYS[j];
+    for (var j = 0; j < PRESET_METADATA_ONLY_KEYS.length; j++) {
+      var key = PRESET_METADATA_ONLY_KEYS[j];
       if (preset[key] === undefined) continue;
-      var presetVal = preset[key];
-      var stateVal = state[key];
-      if (PRESET_METADATA_ONLY_KEYS.indexOf(key) >= 0) {
-        if (!shouldApplyMetadataField(key, presetVal, stateVal)) continue;
-      }
-      state[key] = copyMetadataValue(key, presetVal);
+      if (!shouldApplyMetadataField(key, preset[key], state[key])) continue;
+      state[key] = copyMetadataValue(key, preset[key]);
     }
     return state;
+  }
+
+  /** 프리셋 전환 시 이전 프리셋 대회명 등이 남지 않도록 메타데이터를 즉시 교체 */
+  function applyActivePresetMetadataOnSwitch(presetId) {
+    if (!presetId) return false;
+    setSyncPresetId(String(presetId));
+    var presets = loadPresetsFromStorage();
+    var preset = null;
+    for (var i = 0; i < presets.length; i++) {
+      if (presets[i] && presets[i].id === presetId) {
+        preset = presets[i];
+        break;
+      }
+    }
+    if (!preset) return false;
+    var state = readSyncState();
+    if (!state) state = buildInitialTimerState();
+    if (!state) return false;
+    mergePresetsIntoState(state);
+    state.activePresetId = String(presetId);
+    for (var j = 0; j < PRESET_METADATA_ONLY_KEYS.length; j++) {
+      var key = PRESET_METADATA_ONLY_KEYS[j];
+      if (preset[key] !== undefined) {
+        state[key] = copyMetadataValue(key, preset[key]);
+      }
+    }
+    state.timer = normalizeTimer(state.timer, state);
+    ensureTotalSecondsState(state);
+    syncLevelField(state);
+    writeSyncState(state, { skipCloudPush: true, skipPresetEmbed: true });
+    return true;
   }
 
   /** 활성 프리셋 메타데이터를 타이머 동기화 상태에 즉시 반영 */
@@ -276,7 +303,7 @@
     state.timer = normalizeTimer(state.timer, state);
     ensureTotalSecondsState(state);
     syncLevelField(state);
-    writeSyncState(state);
+    writeSyncState(state, { skipPresetEmbed: true });
     return true;
   }
 
@@ -1113,7 +1140,7 @@
       bridgeCompleted = t.bridge.kind;
       t.bridge = null;
       applyResume(s, now);
-      writeSyncState(s);
+      writeSyncState(s, { skipPresetEmbed: true });
       return {
         state: s,
         advanced: false,
@@ -1127,9 +1154,9 @@
 
     var res = tickExpire(s, now, canOwn);
     if (res.advanced) {
-      writeSyncState(res.state);
+      writeSyncState(res.state, { skipPresetEmbed: true });
     } else if (canOwn && totalSecAfter !== totalSecBefore) {
-      writeSyncState(res.state);
+      writeSyncState(res.state, { skipPresetEmbed: true });
     }
     var live = res.state;
     var rem = remainingSec(live, now);
@@ -1190,5 +1217,6 @@
     mergePresetLists: mergePresetLists,
     isPresetMetadataEmpty: isPresetMetadataEmpty,
     flushActivePresetMetadataToTimer: flushActivePresetMetadataToTimer,
+    applyActivePresetMetadataOnSwitch: applyActivePresetMetadataOnSwitch,
   };
 })(typeof window !== "undefined" ? window : this);

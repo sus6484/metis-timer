@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbwEr9geWitJJG2bHHV-w1DGCZh3MhvzibcNP4Nym5yNnZ4hJnruSshvk3ATMqPCX8gHpQ/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260620",
+    assetVersion: "20260621",
   };
 
   var STORAGE_PRESETS = "metis_blindPresets";
@@ -65,9 +65,22 @@
     }
   }
 
+  var PRESET_REALTIME_COMPARE_KEYS = ["player", "entry", "entryChips", "regCloseLevel"];
+
+  function presetForCloudCompare(p) {
+    if (!p || typeof p !== "object") return p;
+    var o = Object.assign({}, p);
+    for (var i = 0; i < PRESET_REALTIME_COMPARE_KEYS.length; i++) {
+      delete o[PRESET_REALTIME_COMPARE_KEYS[i]];
+    }
+    return o;
+  }
+
   function presetsJsonEqual(cloudList, localList) {
     try {
-      return JSON.stringify(cloudList) === JSON.stringify(localList);
+      var cloudNorm = (cloudList || []).map(presetForCloudCompare);
+      var localNorm = (localList || []).map(presetForCloudCompare);
+      return JSON.stringify(cloudNorm) === JSON.stringify(localNorm);
     } catch (e1) {
       return false;
     }
@@ -135,6 +148,12 @@
         localStorage.setItem(STORAGE_ACTIVE, nextActive);
         if (global.MetisTimer && global.MetisTimer.setSyncPresetId) {
           global.MetisTimer.setSyncPresetId(nextActive);
+        }
+        if (
+          global.MetisTimer &&
+          global.MetisTimer.applyActivePresetMetadataOnSwitch
+        ) {
+          global.MetisTimer.applyActivePresetMetadataOnSwitch(nextActive);
         }
       }
     }

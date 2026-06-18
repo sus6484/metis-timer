@@ -1859,7 +1859,7 @@
             } catch (e) {}
             MetisTimer.applyStartOrResume(s, Date.now());
           }
-          MetisTimer.writeSyncState(s);
+          MetisTimer.writeSyncState(s, { skipPresetEmbed: true });
           tick();
         }
 
@@ -1947,7 +1947,7 @@
           var s = MetisTimer.readSyncState();
           if (!s) return;
           mutator(s, Date.now());
-          MetisTimer.writeSyncState(s);
+          MetisTimer.writeSyncState(s, { skipPresetEmbed: true });
           refreshFromBroadcast();
         }
 

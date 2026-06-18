@@ -742,6 +742,33 @@ label.remote-meta-field.remote-meta-toggle-row {
   background: rgba(255, 255, 255, 0.02);
 }
 
+.preset-name-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.preset-name-text {
+  min-width: 0;
+}
+
+.preset-active-mark {
+  color: #22c55e;
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+  text-shadow: 0 0 6px rgba(34, 197, 94, 0.45);
+}
+
+.preset-row--active td {
+  background: rgba(34, 197, 94, 0.04);
+}
+
+.preset-table tr.preset-row--active:hover td {
+  background: rgba(34, 197, 94, 0.08);
+}
+
 .preset-actions {
   display: flex;
   gap: 6px;

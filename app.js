@@ -518,6 +518,29 @@
     return localStorage.getItem(STORAGE.ACTIVE_PRESET_ID) || "";
   }
 
+  function resolveActivePresetId() {
+    var presets = getPresets();
+    var candidates = [];
+    var stored = getActivePresetId();
+    if (stored) candidates.push(stored);
+    if (window.MetisTimer) {
+      if (MetisTimer.getSyncPresetId) {
+        var syncId = MetisTimer.getSyncPresetId();
+        if (syncId) candidates.push(syncId);
+      }
+      if (MetisTimer.readSyncState) {
+        var s = MetisTimer.readSyncState();
+        if (s && s.activePresetId) candidates.push(String(s.activePresetId));
+      }
+    }
+    for (var i = 0; i < candidates.length; i++) {
+      for (var j = 0; j < presets.length; j++) {
+        if (presets[j].id === candidates[i]) return candidates[i];
+      }
+    }
+    return "";
+  }
+
   function setActivePresetId(id) {
     localStorage.setItem(STORAGE.ACTIVE_PRESET_ID, id);
     MetisTimer.setSyncPresetId(id);
@@ -531,6 +554,10 @@
     mergeRemoteIntoActivePreset();
     setActivePresetId(id);
     if (presetSelect) presetSelect.value = id;
+    renderPresets();
+    if (MetisTimer.applyActivePresetMetadataOnSwitch) {
+      MetisTimer.applyActivePresetMetadataOnSwitch(id);
+    }
     var pull =
       window.MetisSheetSync && MetisSheetSync.pullAndApplyPresetTimerState
         ? MetisSheetSync.pullAndApplyPresetTimerState(id)
@@ -768,8 +795,9 @@
       if (result && result.presetsApplied) {
         renderPresets();
       }
-      if (ar.activePresetChanged && presetSelect) {
-        presetSelect.value = getActivePresetId();
+      if (ar.activePresetChanged) {
+        if (presetSelect) presetSelect.value = getActivePresetId();
+        renderPresets();
       }
       var s = MetisTimer.readSyncState();
       if (!s) return;
@@ -1300,7 +1328,7 @@
 
   function renderPresets() {
     var presets = getPresets();
-    var active = getActivePresetId();
+    var active = resolveActivePresetId();
     presetSelect.innerHTML = "";
     var opt0 = document.createElement("option");
     opt0.value = "";
@@ -1317,12 +1345,20 @@
     presetTbody.innerHTML = "";
     presets.forEach(function (p, idx) {
       var tr = document.createElement("tr");
+      if (p.id === active) tr.classList.add("preset-row--active");
+      var activeDot =
+        p.id === active
+          ? '<span class="preset-active-mark" aria-hidden="true" title="현재 적용 중">●</span>'
+          : "";
       tr.innerHTML =
         "<td>" +
         (idx + 1) +
         "</td><td>" +
+        '<span class="preset-name-wrap">' +
+        activeDot +
+        '<span class="preset-name-text">' +
         escapeHtml(p.name) +
-        "</td><td>" +
+        "</span></span></td><td>" +
         countPresetLevelRows(p.levels) +
         '</td><td class="preset-actions"></td>';
       var cell = tr.querySelector(".preset-actions");
