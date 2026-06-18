@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <title>Metis — 홀덤 타이머 관리</title>
-    <link rel="stylesheet" href="styles.css?v=20260611" />
+    <link rel="stylesheet" href="styles.css?v=20260618" />
   </head>
   <body>
     <div class="app">
@@ -14,14 +14,12 @@
         <div class="auth-card">
           <p class="auth-brand">Metis Timer</p>
           <h1 class="auth-title">관리자 인증</h1>
-          <p class="auth-desc">6자리 숫자 비밀번호를 입력하세요.</p>
-          <div class="pin-row" role="group" aria-label="비밀번호 6자리">
+          <p class="auth-desc">4자리 숫자 비밀번호를 입력하세요.</p>
+          <div class="pin-row" role="group" aria-label="비밀번호 4자리">
             <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="one-time-code" aria-label="1번째 자리" />
             <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="2번째 자리" />
             <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="3번째 자리" />
             <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="4번째 자리" />
-            <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="5번째 자리" />
-            <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]*" autocomplete="off" aria-label="6번째 자리" />
           </div>
           <p id="auth-error" class="auth-error" role="alert"></p>
           <button type="button" id="btn-unlock" class="btn-primary">확인</button>

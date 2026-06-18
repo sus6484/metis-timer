@@ -74,7 +74,7 @@
 
   function getAdminPin() {
     var p = localStorage.getItem(STORAGE.ADMIN_PIN);
-    if (p && /^\d{6}$/.test(p)) return p;
+    if (p && /^\d{4}$/.test(p)) return p;
     return null;
   }
 
@@ -83,7 +83,12 @@
   }
 
   function ensureAdminPin() {
-    if (!getAdminPin()) setAdminPin("444444");
+    var p = localStorage.getItem(STORAGE.ADMIN_PIN);
+    if (p === "000000" || p === "444444") {
+      setAdminPin("4444");
+      return;
+    }
+    if (!getAdminPin()) setAdminPin("4444");
   }
 
   function getRemote() {
@@ -557,11 +562,41 @@
     return base;
   }
 
-  function persistAll() {
-    mergeRemoteIntoActivePreset();
+  function persistTimerSync() {
     clampPlayerEntry(remoteState);
     MetisTimer.setSyncPresetId(getActivePresetId());
-    MetisTimer.writeSyncState(buildFullSync());
+    MetisTimer.writeSyncState(buildFullSync(), { skipPresetEmbed: true });
+  }
+
+  var presetSnapshotTimer = null;
+  function persistPresetSnapshot() {
+    mergeRemoteIntoActivePreset();
+  }
+
+  function schedulePresetSnapshot() {
+    if (presetSnapshotTimer) clearTimeout(presetSnapshotTimer);
+    presetSnapshotTimer = setTimeout(function () {
+      presetSnapshotTimer = null;
+      persistPresetSnapshot();
+    }, 350);
+  }
+
+  function flushPresetSnapshot() {
+    if (presetSnapshotTimer) {
+      clearTimeout(presetSnapshotTimer);
+      presetSnapshotTimer = null;
+    }
+    persistPresetSnapshot();
+  }
+
+  function persistAll() {
+    mergeRemoteIntoActivePreset();
+    persistTimerSync();
+  }
+
+  function pushRemoteLive() {
+    persistTimerSync();
+    schedulePresetSnapshot();
   }
 
   var saveToastTimer = null;
@@ -742,8 +777,8 @@
   function tryUnlock() {
     authError.textContent = "";
     var pin = getPinFromInputs();
-    if (pin.length !== 6) {
-      authError.textContent = "6자리 숫자를 모두 입력해 주세요.";
+    if (pin.length !== 4) {
+      authError.textContent = "4자리 숫자를 모두 입력해 주세요.";
       return;
     }
     ensureAdminPin();
@@ -995,20 +1030,25 @@
     inputTournamentName.dataset.bound = "1";
     function pushMeta() {
       syncMetaFromInputs();
-      persistAll();
+      pushRemoteLive();
+    }
+    function flushMeta() {
+      syncMetaFromInputs();
+      persistTimerSync();
+      flushPresetSnapshot();
     }
     inputTournamentName.addEventListener("input", pushMeta);
-    inputTournamentName.addEventListener("change", pushMeta);
-    inputTournamentName.addEventListener("blur", pushMeta);
+    inputTournamentName.addEventListener("change", flushMeta);
+    inputTournamentName.addEventListener("blur", flushMeta);
     if (inputTotalPrize) {
       inputTotalPrize.addEventListener("input", pushMeta);
-      inputTotalPrize.addEventListener("change", pushMeta);
-      inputTotalPrize.addEventListener("blur", pushMeta);
+      inputTotalPrize.addEventListener("change", flushMeta);
+      inputTotalPrize.addEventListener("blur", flushMeta);
     }
     if (inputTournamentInfo) {
       inputTournamentInfo.addEventListener("input", pushMeta);
-      inputTournamentInfo.addEventListener("change", pushMeta);
-      inputTournamentInfo.addEventListener("blur", pushMeta);
+      inputTournamentInfo.addEventListener("change", flushMeta);
+      inputTournamentInfo.addEventListener("blur", flushMeta);
     }
     function bindFontScaleInput(input, output) {
       if (!input) return;
@@ -1016,15 +1056,25 @@
         syncMetaFromInputs();
         if (output) output.textContent = input.value + "%";
         input.setAttribute("aria-valuenow", input.value);
-        persistAll();
+        pushRemoteLive();
+      }
+      function flushFontScale() {
+        syncMetaFromInputs();
+        if (output) output.textContent = input.value + "%";
+        input.setAttribute("aria-valuenow", input.value);
+        persistTimerSync();
+        flushPresetSnapshot();
       }
       input.addEventListener("input", pushFontScale);
-      input.addEventListener("change", pushFontScale);
+      input.addEventListener("change", flushFontScale);
     }
     bindFontScaleInput(inputInfoFontScale, outputInfoFontScale);
     bindFontScaleInput(inputPrizeFontScale, outputPrizeFontScale);
     if (inputLeftPanelRotate) {
-      inputLeftPanelRotate.addEventListener("change", pushMeta);
+      inputLeftPanelRotate.addEventListener("change", function () {
+        syncMetaFromInputs();
+        persistAll();
+      });
     }
   }
 
@@ -1122,11 +1172,11 @@
       remoteState.entry = Math.max(0, Number.isFinite(e) ? e : 0);
       clampPlayerEntry(remoteState);
       refreshEntryPlayerDisplays();
-      persistAll();
+      pushRemoteLive();
     }
     function push() {
       refreshEntryPlayerDisplays();
-      persistAll();
+      pushRemoteLive();
     }
     function bindStatInput(el, handler) {
       if (!el || el.tagName !== "INPUT") return;
@@ -1174,11 +1224,11 @@
       var v = parseInt(valEc.value, 10);
       remoteState.entryChips = Math.max(0, Number.isFinite(v) ? v : 0);
       refreshStacks();
-      persistAll();
+      pushRemoteLive();
     }
     function push() {
       refreshStacks();
-      persistAll();
+      pushRemoteLive();
     }
     if (valEc && valEc.tagName === "INPUT") {
       valEc.addEventListener("change", syncChipsFromInput);
@@ -1798,7 +1848,6 @@
   }
 
   ensureAdminPin();
-  if (getAdminPin() === "000000") setAdminPin("444444");
 
   pinInputs.forEach(function (input, i) {
     input.addEventListener("input", function () {

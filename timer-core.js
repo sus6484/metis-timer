@@ -218,6 +218,7 @@
       var key = PRESET_METADATA_ONLY_KEYS[j];
       if (preset[key] === undefined) continue;
       if (!shouldApplyMetadataField(key, preset[key], state[key])) continue;
+      if (!isPresetMetadataEmpty(key, state[key])) continue;
       state[key] = copyMetadataValue(key, preset[key]);
     }
     return state;
@@ -538,9 +539,10 @@
     } catch (e) {}
   }
 
-  function writeSyncState(state) {
+  function writeSyncState(state, options) {
+    options = options || {};
     mergePresetsIntoState(state);
-    embedActivePresetTournament(state);
+    if (!options.skipPresetEmbed) embedActivePresetTournament(state);
     state.updatedAt = Date.now();
     var str = JSON.stringify(state);
     localStorage.setItem(getSyncStorageKey(), str);
