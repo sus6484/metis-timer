@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbwEr9geWitJJG2bHHV-w1DGCZh3MhvzibcNP4Nym5yNnZ4hJnruSshvk3ATMqPCX8gHpQ/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260621",
+    assetVersion: "20260622",
   };
 
   var STORAGE_PRESETS = "metis_blindPresets";
@@ -190,10 +190,51 @@
   }
 
   /** 이 기기가 클라우드보다 앞서 있을 때만 업로드 (역주행 push 차단) */
+  function syncCloudWatermarkFromPull(data, applyResult) {
+    if (!data) return;
+    adoptCloudUpdatedAt(data.updatedAt);
+    if (
+      applyResult &&
+      applyResult.applied &&
+      applyResult.presetId &&
+      data.timerStates
+    ) {
+      var sl = data.timerStates[applyResult.presetId];
+      if (sl && sl.updatedAt) adoptCloudUpdatedAt(sl.updatedAt);
+    }
+  }
+
+  function isCloudTimerAheadOfLocal(data) {
+    if (
+      !data ||
+      !data.timerStates ||
+      !global.MetisTimer ||
+      !global.MetisTimer.timerGameplayRank
+    ) {
+      return false;
+    }
+    var presetId = resolveTimerPresetId({
+      activePresetId: data.activePresetId,
+    });
+    if (!presetId) return false;
+    var cloudSlice = data.timerStates[presetId];
+    if (!cloudSlice) return false;
+    global.MetisTimer.setSyncPresetId(presetId);
+    var localState = global.MetisTimer.readSyncState();
+    if (!localState) return false;
+    var localSlice = global.MetisTimer.pickTimerSyncSlice(localState, presetId);
+    return (
+      global.MetisTimer.timerGameplayRank(cloudSlice) >
+      global.MetisTimer.timerGameplayRank(localSlice)
+    );
+  }
+
+  /** 이 기기가 클라우드보다 앞서 있을 때만 업로드 (역주행 push 차단) */
   function maybePushLocalIfAheadOfCloud(data) {
     if (!data) return;
     var cloudU = Number(data.updatedAt) || 0;
     var localU = getLastCloudUpdatedAt();
+    if (localU > cloudU && isCloudTimerAheadOfLocal(data)) return;
     if (localU > cloudU) pushLocalPresetsToCloud();
   }
 
@@ -262,6 +303,7 @@
       skipActivePresetMutation: skipActiveMutation,
       pinnedPresetId: pinnedId,
     });
+    syncCloudWatermarkFromPull(data, applyResult);
     maybePushLocalIfAheadOfCloud(data);
     applyResult.activePresetChanged =
       presetResult.activePresetChanged || applyResult.activePresetChanged;
@@ -373,6 +415,9 @@
 
     var prevLevelIndex = snapshotTimerLevel(localState);
     if (!global.MetisTimer.applyTimerSyncSlice(localState, cloudSlice)) return result;
+
+    var appliedU = global.MetisTimer.timerSyncUpdatedAt(cloudSlice);
+    if (appliedU > 0) localState.updatedAt = appliedU;
 
     global.MetisTimer.writeSyncState(localState, {
       skipCloudPush: true,

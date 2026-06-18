@@ -96,7 +96,18 @@ function mergeOneTimerState_(localSlice, remoteSlice) {
   if (!localSlice || typeof localSlice !== "object") return remoteSlice;
   var localU = Number(localSlice.updatedAt) || 0;
   var remoteU = Number(remoteSlice.updatedAt) || 0;
-  return remoteU >= localU ? remoteSlice : localSlice;
+  var primary = remoteU >= localU ? remoteSlice : localSlice;
+  var secondary = remoteU >= localU ? localSlice : remoteSlice;
+  var out = JSON.parse(JSON.stringify(primary));
+  var statsKeys = ["player", "entry", "entryChips"];
+  for (var i = 0; i < statsKeys.length; i++) {
+    var k = statsKeys[i];
+    if (out[k] === undefined && secondary[k] !== undefined) {
+      out[k] = secondary[k];
+    }
+  }
+  out.updatedAt = Math.max(localU, remoteU);
+  return out;
 }
 
 function readStore_() {

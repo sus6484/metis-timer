@@ -130,9 +130,10 @@
     return Array.isArray(list) && list.length ? list : defaultPresets();
   }
 
-  function savePresets(list) {
+  function savePresets(list, options) {
+    options = options || {};
     localStorage.setItem(STORAGE.PRESETS, JSON.stringify(list));
-    if (window.MetisSheetSync) {
+    if (!options.skipCloudPush && window.MetisSheetSync) {
       MetisSheetSync.savePresetsToCloud(list, getActivePresetId());
     }
   }
@@ -243,7 +244,8 @@
     return o;
   }
 
-  function mergeRemoteIntoActivePreset() {
+  function mergeRemoteIntoActivePreset(options) {
+    options = options || {};
     var aid = getActivePresetId();
     if (!aid) return;
     var list = getPresets();
@@ -269,7 +271,7 @@
         list[idx][k] = remoteState[k];
       }
     }
-    savePresets(list);
+    savePresets(list, options);
   }
 
   function tournamentSliceFromRemote() {
@@ -567,7 +569,7 @@
         : Promise.resolve();
     return pull.then(function () {
       remoteState = getRemote();
-      persistAll();
+      mirrorLocalSync();
       renderRemote();
     });
   }
@@ -580,9 +582,9 @@
   var remoteState;
   var editingPresetId = null;
 
-  function buildFullSync() {
+  function buildFullSync(skipPresetMerge) {
     MetisTimer.setSyncPresetId(getActivePresetId());
-    mergeRemoteIntoActivePreset();
+    if (!skipPresetMerge) mergeRemoteIntoActivePreset();
     var prev = MetisTimer.readSyncState();
     var presets = getPresets();
     var aid = getActivePresetId();
@@ -637,6 +639,17 @@
   function persistAll() {
     mergeRemoteIntoActivePreset();
     persistTimerSync();
+  }
+
+  /** 클라우드 push 없이 로컬 저장소만 맞춤 (앱 시작·클라우드 pull 직후) */
+  function mirrorLocalSync() {
+    mergeRemoteIntoActivePreset({ skipCloudPush: true });
+    clampPlayerEntry(remoteState);
+    MetisTimer.setSyncPresetId(getActivePresetId());
+    MetisTimer.writeSyncState(buildFullSync(true), {
+      skipPresetEmbed: true,
+      skipCloudPush: true,
+    });
   }
 
   function pushRemoteLive() {
@@ -863,7 +876,7 @@
       showScreen("remote");
       renderRemote();
       renderPresets();
-      persistAll();
+      mirrorLocalSync();
       syncLastSeenFromStore();
       startCloudTimerSyncIfNeeded();
     } else {
@@ -2093,7 +2106,7 @@
       showScreen("remote");
       renderRemote();
       renderPresets();
-      persistAll();
+      mirrorLocalSync();
       syncLastSeenFromStore();
       startCloudTimerSyncIfNeeded();
     } else {

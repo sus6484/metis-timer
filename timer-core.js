@@ -632,6 +632,39 @@
     return timerSyncUpdatedAt(cloudSlice) > timerSyncUpdatedAt(localSlice);
   }
 
+  /** 진행도 비교용 — updatedAt만으로 놓치는 “리셋된 로컬 vs 진행 중 클라우드” 판별 */
+  function timerGameplayRank(slice) {
+    if (!slice || typeof slice !== "object") return 0;
+    var t = slice.timer;
+    if (!t) return slice.hasStartedOnce ? 1 : 0;
+    var levelIdx = Math.max(0, parseInt(t.levelIndex, 10) || 0);
+    if (t.isRunning || t.bridge) {
+      return 100 + levelIdx * 10 + (t.isRunning ? 1 : 0);
+    }
+    if (slice.hasStartedOnce) return 50 + levelIdx * 10;
+    if (levelIdx > 0) return 20 + levelIdx;
+    return 0;
+  }
+
+  /**
+   * 클라우드 슬라이스를 적용할지 판단한다.
+   * 로컬 updatedAt이 더 크더라도, 로컬이 대기/리셋이고 클라우드가 진행 중이면 클라우드를 따른다.
+   */
+  function shouldApplyCloudTimerSlice(cloudSlice, localSlice) {
+    if (!cloudSlice || typeof cloudSlice !== "object") return false;
+    if (!localSlice || typeof localSlice !== "object") return true;
+    var cloudU = timerSyncUpdatedAt(cloudSlice);
+    var localU = timerSyncUpdatedAt(localSlice);
+    if (cloudU > localU) return true;
+    if (cloudU < localU) {
+      var cloudRank = timerGameplayRank(cloudSlice);
+      var localRank = timerGameplayRank(localSlice);
+      if (cloudRank > localRank + 5) return true;
+      if (cloudRank >= 50 && localRank < 20) return true;
+    }
+    return false;
+  }
+
   /**
    * 클라우드 슬라이스를 로컬 state에 병합한다. cloud가 더 최신일 때만 적용.
    * @returns {boolean} 변경 여부
@@ -639,7 +672,7 @@
   function applyTimerSyncSlice(state, cloudSlice) {
     if (!state || !cloudSlice || typeof cloudSlice !== "object") return false;
     var localSlice = pickTimerSyncSlice(state);
-    if (!isTimerSyncSliceNewer(cloudSlice, localSlice)) return false;
+    if (!shouldApplyCloudTimerSlice(cloudSlice, localSlice)) return false;
     for (var i = 0; i < TIMER_SYNC_KEYS.length; i++) {
       var k = TIMER_SYNC_KEYS[i];
       if (cloudSlice[k] === undefined) continue;
@@ -673,6 +706,29 @@
     } catch (e) {}
   }
 
+  function pickTimerHeartbeatSlice(state, presetId) {
+    var full = pickTimerSyncSlice(state, presetId);
+    var out = {};
+    var keys = [
+      "presetId",
+      "activePresetId",
+      "timer",
+      "timerStatus",
+      "displayTime",
+      "level",
+      "hasStartedOnce",
+      "pendingBridge",
+      "regCloseAt",
+      "totalScheduleCommittedSec",
+      "updatedAt",
+    ];
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      if (full[k] !== undefined) out[k] = full[k];
+    }
+    return out;
+  }
+
   function writeSyncState(state, options) {
     options = options || {};
     mergePresetsIntoState(state);
@@ -695,9 +751,12 @@
         syncPresetId ||
         (state.activePresetId != null ? String(state.activePresetId) : "");
       if (pushPresetId) {
+        var cloudSlice = options.cloudHeartbeat
+          ? pickTimerHeartbeatSlice(state, pushPresetId)
+          : pickTimerSyncSlice(state, pushPresetId);
         global.MetisSheetSync.saveTimerStateToCloud(
           pushPresetId,
-          pickTimerSyncSlice(state, pushPresetId)
+          cloudSlice
         );
       }
     }
@@ -1116,6 +1175,28 @@
     };
   }
 
+  var lastCloudHeartbeatAt = 0;
+  var CLOUD_HEARTBEAT_MS = 5000;
+
+  function needsCloudHeartbeat(state) {
+    if (!state) return false;
+    var t = state.timer;
+    if (t && (t.isRunning || t.bridge)) return true;
+    if (state.hasStartedOnce && (state.timerStatus || "") !== "대기중") return true;
+    return false;
+  }
+
+  function applyCloudHeartbeat(state, now) {
+    var t = normalizeTimer(state.timer, state);
+    state.timer = t;
+    var rem = remainingSec(state, now);
+    state.displayTime = formatMMSS(rem);
+    if (!t.isRunning && !t.bridge) {
+      t.pausedRemainingSec = rem;
+    }
+    state.updatedAt = now;
+  }
+
   /**
    * 한 스텝: 만료 시 다음 레벨 반영 후 저장. UI는 remainingSec / state 로 갱신.
    */
@@ -1159,6 +1240,15 @@
       writeSyncState(res.state, { skipPresetEmbed: true });
     }
     var live = res.state;
+    if (
+      canOwn &&
+      needsCloudHeartbeat(live) &&
+      now - lastCloudHeartbeatAt >= CLOUD_HEARTBEAT_MS
+    ) {
+      lastCloudHeartbeatAt = now;
+      applyCloudHeartbeat(live, now);
+      writeSyncState(live, { skipPresetEmbed: true, cloudHeartbeat: true });
+    }
     var rem = remainingSec(live, now);
     return {
       state: live,
@@ -1209,9 +1299,12 @@
     pickRemoteSlice: pickRemoteSlice,
     TIMER_SYNC_KEYS: TIMER_SYNC_KEYS,
     pickTimerSyncSlice: pickTimerSyncSlice,
+    pickTimerHeartbeatSlice: pickTimerHeartbeatSlice,
     applyTimerSyncSlice: applyTimerSyncSlice,
     timerSyncUpdatedAt: timerSyncUpdatedAt,
     isTimerSyncSliceNewer: isTimerSyncSliceNewer,
+    shouldApplyCloudTimerSlice: shouldApplyCloudTimerSlice,
+    timerGameplayRank: timerGameplayRank,
     syncAllPresetsMetadataFromStorage: syncAllPresetsMetadataFromStorage,
     recoverPresetsMetadataFromTimerStates: recoverPresetsMetadataFromTimerStates,
     mergePresetLists: mergePresetLists,
