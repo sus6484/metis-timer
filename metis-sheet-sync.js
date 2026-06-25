@@ -6,9 +6,9 @@
   "use strict";
 
   var CONFIG = {
-    url: "https://script.google.com/macros/s/AKfycbwEr9geWitJJG2bHHV-w1DGCZh3MhvzibcNP4Nym5yNnZ4hJnruSshvk3ATMqPCX8gHpQ/exec",
+    url: "https://script.google.com/macros/s/AKfycbyWP672_JV5UTzGmoXsyR9cA77wXWbn-Xd_FkE3gLPMKQdhJMYeZXFdOjaOjpWKzWuaRA/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260622",
+    assetVersion: "20260623",
   };
 
   var STORAGE_PRESETS = "metis_blindPresets";
