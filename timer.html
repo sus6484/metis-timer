@@ -894,7 +894,7 @@
     </div>
 
     <script>window.__METIS_ASSET_V = "20260620";</script>
-    <script src="metis-sheet-sync.js?v=20260623"></script>
+    <script src="metis-sheet-sync.js?v=20260624"></script>
     <script>
       (function () {
         function resolveFallbackId() {
@@ -1943,11 +1943,16 @@
           if (navigator.vibrate) navigator.vibrate(10);
         }
 
-        function mutateSync(mutator) {
+        function mutateSync(mutator, options) {
+          options = options || {};
           var s = MetisTimer.readSyncState();
           if (!s) return;
           mutator(s, Date.now());
-          MetisTimer.writeSyncState(s, { skipPresetEmbed: true });
+          MetisTimer.writeSyncState(s, {
+            skipPresetEmbed: true,
+            bumpStats: !!options.bumpStats,
+            urgentCloudPush: !!options.urgentCloudPush,
+          });
           refreshFromBroadcast();
         }
 
@@ -1981,14 +1986,14 @@
             delete lastUi["el-clock"];
             delete lastUi["break-remaining-top"];
             prevLevelSecExact = null;
-          });
+          }, { urgentCloudPush: true });
           tick();
         }
 
         function adjustLevel(delta) {
           mutateSync(function (s, now) {
             MetisTimer.applyScheduleLevelDelta(s, now, delta);
-          });
+          }, { urgentCloudPush: true });
         }
 
         function quickStart() {
@@ -1997,14 +2002,16 @@
               MetisAudio.unlock();
               if (MetisAudio.resumeCtx) MetisAudio.resumeCtx();
             }
+            var t = MetisTimer.normalizeTimer(s.timer || {}, s);
+            if (MetisTimer.isEffectivelyRunningTimer(t, now)) return;
             MetisTimer.applyStartOrResume(s, now);
-          });
+          }, { urgentCloudPush: true });
         }
 
         function quickPause() {
           mutateSync(function (s, now) {
             MetisTimer.applyPause(s, now);
-          });
+          }, { urgentCloudPush: true });
         }
 
         function quickEnd() {
@@ -2025,7 +2032,7 @@
             } else {
               s.displayTime = "00:00";
             }
-          });
+          }, { urgentCloudPush: true });
         }
 
         function adjustEntry(delta) {
@@ -2039,7 +2046,7 @@
               s.entry = Math.max(0, e - 1);
               s.player = Math.min(p, s.entry);
             }
-          });
+          }, { bumpStats: true, urgentCloudPush: true });
         }
 
         function adjustPlayer(delta) {
@@ -2048,7 +2055,7 @@
             var p = Math.max(0, Math.floor(Number(s.player) || 0));
             if (delta > 0) s.player = Math.min(e, p + 1);
             else s.player = Math.max(0, p - 1);
-          });
+          }, { bumpStats: true, urgentCloudPush: true });
         }
 
         function handleQuickAction(action) {

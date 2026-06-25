@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbyWP672_JV5UTzGmoXsyR9cA77wXWbn-Xd_FkE3gLPMKQdhJMYeZXFdOjaOjpWKzWuaRA/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260623",
+    assetVersion: "20260624",
   };
 
   var STORAGE_PRESETS = "metis_blindPresets";
@@ -200,7 +200,11 @@
       data.timerStates
     ) {
       var sl = data.timerStates[applyResult.presetId];
-      if (sl && sl.updatedAt) adoptCloudUpdatedAt(sl.updatedAt);
+      if (sl) {
+        if (sl.timerUpdatedAt) adoptCloudUpdatedAt(sl.timerUpdatedAt);
+        if (sl.statsUpdatedAt) adoptCloudUpdatedAt(sl.statsUpdatedAt);
+        if (sl.updatedAt) adoptCloudUpdatedAt(sl.updatedAt);
+      }
     }
   }
 
@@ -417,7 +421,12 @@
     if (!global.MetisTimer.applyTimerSyncSlice(localState, cloudSlice)) return result;
 
     var appliedU = global.MetisTimer.timerSyncUpdatedAt(cloudSlice);
-    if (appliedU > 0) localState.updatedAt = appliedU;
+    var appliedTU = global.MetisTimer.sliceTimerUpdatedAt(cloudSlice);
+    var appliedSU = global.MetisTimer.sliceStatsUpdatedAt(cloudSlice);
+    if (appliedTU > 0) localState.timerUpdatedAt = appliedTU;
+    else if (appliedU > 0) localState.timerUpdatedAt = appliedU;
+    if (appliedSU > 0) localState.statsUpdatedAt = appliedSU;
+    else if (appliedU > 0) localState.statsUpdatedAt = appliedU;
 
     global.MetisTimer.writeSyncState(localState, {
       skipCloudPush: true,
@@ -462,18 +471,26 @@
       });
   }
 
-  function saveTimerStateToCloud(presetId, slice) {
+  function saveTimerStateToCloud(presetId, slice, options) {
+    options = options || {};
     if (!presetId || !slice || typeof slice !== "object") return;
     pendingTimerSave = {
       presetId: String(presetId),
       timerState: slice,
     };
     if (timerSaveTimer) clearTimeout(timerSaveTimer);
+    timerSaveTimer = null;
+    var delay = options.urgent ? 0 : 350;
+    if (delay <= 0) {
+      setCloudSyncPhase("syncing");
+      flushTimerSave();
+      return;
+    }
     timerSaveTimer = setTimeout(function () {
       timerSaveTimer = null;
       setCloudSyncPhase("syncing");
       flushTimerSave();
-    }, 350);
+    }, delay);
   }
 
   function getCloudPollIntervalMs() {

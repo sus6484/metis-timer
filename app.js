@@ -609,10 +609,15 @@
     return base;
   }
 
-  function persistTimerSync() {
+  function persistTimerSync(options) {
+    options = options || {};
     clampPlayerEntry(remoteState);
     MetisTimer.setSyncPresetId(getActivePresetId());
-    MetisTimer.writeSyncState(buildFullSync(), { skipPresetEmbed: true });
+    MetisTimer.writeSyncState(buildFullSync(true), {
+      skipPresetEmbed: true,
+      bumpStats: !!options.bumpStats,
+      urgentCloudPush: !!options.urgentCloudPush,
+    });
   }
 
   var presetSnapshotTimer = null;
@@ -653,7 +658,7 @@
   }
 
   function pushRemoteLive() {
-    persistTimerSync();
+    persistTimerSync({ bumpStats: true, urgentCloudPush: true });
     schedulePresetSnapshot();
   }
 
@@ -728,7 +733,7 @@
         MetisTimer.remainingSec(s, now)
       );
     }
-    MetisTimer.writeSyncState(s);
+    MetisTimer.writeSyncState(s, { urgentCloudPush: true });
     applySyncToRemoteState(s);
   }
 
@@ -1876,16 +1881,17 @@
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       ctx.resume().catch(function () {});
     } catch (e1) {}
+    var now = Date.now();
     var s = MetisTimer.readSyncState() || buildFullSync();
     var t = MetisTimer.normalizeTimer(s.timer || {}, s);
-    if (t.isRunning || t.bridge) {
+    if (MetisTimer.isEffectivelyRunningTimer(t, now)) {
       MetisTimer.writeSyncState(s);
       applySyncToRemoteState(s);
       renderRemote();
       return;
     }
-    MetisTimer.applyStartOrResume(s, Date.now());
-    MetisTimer.writeSyncState(s);
+    MetisTimer.applyStartOrResume(s, now);
+    MetisTimer.writeSyncState(s, { urgentCloudPush: true });
     applySyncToRemoteState(s);
     renderRemote();
   }
@@ -1893,7 +1899,7 @@
   function doPause() {
     var s = MetisTimer.readSyncState() || buildFullSync();
     MetisTimer.applyPause(s, Date.now());
-    MetisTimer.writeSyncState(s);
+    MetisTimer.writeSyncState(s, { urgentCloudPush: true });
     applySyncToRemoteState(s);
     renderRemote();
   }
@@ -1901,7 +1907,7 @@
   function doRefresh() {
     var s = MetisTimer.readSyncState() || buildFullSync();
     MetisTimer.applyLevelRefresh(s, Date.now());
-    MetisTimer.writeSyncState(s);
+    MetisTimer.writeSyncState(s, { urgentCloudPush: true });
     applySyncToRemoteState(s);
     renderRemote();
   }
@@ -1933,7 +1939,7 @@
       s.displayTime = "00:00";
     }
 
-    MetisTimer.writeSyncState(s);
+    MetisTimer.writeSyncState(s, { urgentCloudPush: true });
     applySyncToRemoteState(s);
     renderRemote();
   }

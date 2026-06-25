@@ -94,19 +94,58 @@ function mergeTimerStates_(existing, incoming) {
 function mergeOneTimerState_(localSlice, remoteSlice) {
   if (!remoteSlice || typeof remoteSlice !== "object") return localSlice || null;
   if (!localSlice || typeof localSlice !== "object") return remoteSlice;
-  var localU = Number(localSlice.updatedAt) || 0;
-  var remoteU = Number(remoteSlice.updatedAt) || 0;
-  var primary = remoteU >= localU ? remoteSlice : localSlice;
-  var secondary = remoteU >= localU ? localSlice : remoteSlice;
-  var out = JSON.parse(JSON.stringify(primary));
-  var statsKeys = ["player", "entry", "entryChips"];
-  for (var i = 0; i < statsKeys.length; i++) {
-    var k = statsKeys[i];
-    if (out[k] === undefined && secondary[k] !== undefined) {
-      out[k] = secondary[k];
-    }
+
+  function sliceTU(s) {
+    var tu = Number(s.timerUpdatedAt);
+    if (Number.isFinite(tu) && tu > 0) return tu;
+    return Number(s.updatedAt) || 0;
   }
-  out.updatedAt = Math.max(localU, remoteU);
+  function sliceSU(s) {
+    var su = Number(s.statsUpdatedAt);
+    if (Number.isFinite(su) && su > 0) return su;
+    return Number(s.updatedAt) || 0;
+  }
+
+  var localTU = sliceTU(localSlice);
+  var remoteTU = sliceTU(remoteSlice);
+  var localSU = sliceSU(localSlice);
+  var remoteSU = sliceSU(remoteSlice);
+  var timerWinner = remoteTU >= localTU ? remoteSlice : localSlice;
+  var statsWinner = remoteSU >= localSU ? remoteSlice : localSlice;
+
+  var out = JSON.parse(JSON.stringify(timerWinner));
+  var timerKeys = [
+    "timer",
+    "timerStatus",
+    "displayTime",
+    "level",
+    "hasStartedOnce",
+    "pendingBridge",
+    "regCloseAt",
+    "totalScheduleCommittedSec",
+  ];
+  var statsKeys = ["player", "entry", "entryChips"];
+  var metaKeys = ["activePresetId", "presetId"];
+
+  for (var i = 0; i < timerKeys.length; i++) {
+    var tk = timerKeys[i];
+    if (timerWinner[tk] !== undefined) out[tk] = timerWinner[tk];
+    else if (localSlice[tk] !== undefined) out[tk] = localSlice[tk];
+  }
+  for (var j = 0; j < statsKeys.length; j++) {
+    var sk = statsKeys[j];
+    if (statsWinner[sk] !== undefined) out[sk] = statsWinner[sk];
+    else if (localSlice[sk] !== undefined) out[sk] = localSlice[sk];
+  }
+  for (var m = 0; m < metaKeys.length; m++) {
+    var mk = metaKeys[m];
+    if (remoteSlice[mk] !== undefined) out[mk] = remoteSlice[mk];
+    else if (localSlice[mk] !== undefined) out[mk] = localSlice[mk];
+  }
+
+  out.timerUpdatedAt = Math.max(localTU, remoteTU);
+  out.statsUpdatedAt = Math.max(localSU, remoteSU);
+  out.updatedAt = Math.max(out.timerUpdatedAt, out.statsUpdatedAt);
   return out;
 }
 
