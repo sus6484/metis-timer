@@ -8,8 +8,10 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbyBqSCpy5-Xo1-CvIsbzNjJvzaFa3cSDHNTTyjhjPfXp3GrAaEmENwc7yC1ykgz4enPTw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260701",
+    assetVersion: "20260702",
   };
+
+  var CLOUD_PULL_RETRY_DELAYS_MS = [0, 600, 1500];
 
   /** 절충: 원본(350/800/2000/3000)과 공격적(100/400/1000/1500)의 중간 */
   var CLOUD_PUSH_DEBOUNCE_MS = 250;
@@ -175,6 +177,52 @@
     }
   }
 
+  function getMergedPresetsList() {
+    var list = loadLocalPresetsList();
+    if (list.length) return list;
+    if (
+      lastCloudPullData &&
+      Array.isArray(lastCloudPullData.presets) &&
+      lastCloudPullData.presets.length
+    ) {
+      return lastCloudPullData.presets;
+    }
+    return [];
+  }
+
+  function isPresetKnown(presetId) {
+    if (!presetId) return false;
+    if (findPresetById(loadLocalPresetsList(), presetId)) return true;
+    if (
+      lastCloudPullData &&
+      findPresetById(lastCloudPullData.presets, presetId)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  /** timer.html 부팅: URL id → 로컬/클라우드 프리셋 → fallback */
+  function resolveBootPresetId() {
+    var urlId = null;
+    try {
+      if (typeof location !== "undefined" && location.search) {
+        urlId = new URLSearchParams(location.search).get("id");
+      }
+    } catch (e0) {}
+
+    if (urlId && isPresetKnown(urlId)) return urlId;
+
+    var list = getMergedPresetsList();
+    if (list.length) {
+      var aid = getActivePresetIdFromStorage();
+      if (aid && findPresetById(list, aid)) return String(aid);
+      return String(list[0].id);
+    }
+
+    return urlId || "preset_default";
+  }
+
   function findPresetById(list, id) {
     if (!id || !Array.isArray(list)) return null;
     for (var i = 0; i < list.length; i++) {
@@ -193,6 +241,19 @@
     if (!cloudPresets.length) return { merged: null, applied: false };
 
     var localList = loadLocalPresetsList();
+    if (!localList.length) {
+      var freshOut = cloudPresets.slice();
+      var freshTs = loadPresetCloudTimestamps();
+      for (var fi = 0; fi < cloudPresets.length; fi++) {
+        var fp = cloudPresets[fi];
+        if (!fp || !fp.id) continue;
+        var fpid = String(fp.id);
+        var ft = Number(cloudTimestamps[fpid]) || 0;
+        if (ft > 0) freshTs[fpid] = ft;
+      }
+      savePresetCloudTimestamps(freshTs);
+      return { merged: freshOut, applied: true };
+    }
     var localTs = loadPresetCloudTimestamps();
     var localById = {};
     localList.forEach(function (p) {
@@ -493,6 +554,10 @@
     syncCloudWatermarkFromPull(data, applyResult);
     maybePushLocalIfAheadOfCloud(data);
     applyResult.presetsApplied = presetResult.applied;
+
+    if (presetResult.applied) {
+      ensureTimerStateBootstrapped();
+    }
 
     var finalApplied = applyResult.applied || presetResult.applied;
     syncDbg("PULL", "5.processCloudFetchData:완료", {
@@ -951,21 +1016,96 @@
     }
   }
 
-  function pullPresetsToLocal() {
-    if (pullPromise) return pullPromise;
-    pullPromise = fetch(CONFIG.url, { method: "GET", cache: "no-store" })
-      .then(function (res) {
-        if (!res.ok) throw new Error("GET failed: " + res.status);
-        return res.json();
-      })
-      .then(function (data) {
-        processCloudFetchData(data, { skipActivePresetMutation: true });
-        return data;
-      })
-      .catch(function (err) {
-        console.warn("[MetisSheetSync] 클라우드 불러오기 실패, 로컬 데이터 사용:", err);
-        return null;
+  function fetchCloudDataOnce() {
+    return fetch(CONFIG.url, { method: "GET", cache: "no-store" }).then(function (res) {
+      if (!res.ok) throw new Error("GET failed: " + res.status);
+      return res.json();
+    });
+  }
+
+  /** 프리셋이 늦게 도착했을 때 타이머 상태를 처음부터 생성 */
+  function ensureTimerStateBootstrapped() {
+    if (!global.MetisTimer || !global.MetisTimer.readSyncState) return false;
+
+    var presetId =
+      global.__METIS_TIMER_PRESET_ID != null && global.__METIS_TIMER_PRESET_ID !== ""
+        ? String(global.__METIS_TIMER_PRESET_ID)
+        : resolveBootPresetId();
+    if (!presetId || !isPresetKnown(presetId)) return false;
+
+    global.MetisTimer.setSyncPresetId(presetId);
+    var hadState = false;
+    try {
+      var key =
+        global.MetisTimer.getSyncStorageKey &&
+        global.MetisTimer.getSyncStorageKey();
+      hadState = !!(key && localStorage.getItem(key));
+    } catch (e0) {}
+
+    var state = global.MetisTimer.readSyncState();
+    if (!state) return false;
+
+    if (
+      !hadState &&
+      lastCloudPullData &&
+      lastCloudPullData.timerStates &&
+      lastCloudPullData.timerStates[presetId]
+    ) {
+      applyTimerStatesFromCloud(lastCloudPullData.timerStates, {
+        forcePresetId: presetId,
       });
+    }
+
+    if (typeof document !== "undefined") {
+      try {
+        document.dispatchEvent(new Event("metis-presets-bootstrapped"));
+      } catch (e1) {}
+    }
+    return true;
+  }
+
+  function pullPresetsToLocal(options) {
+    options = options || {};
+    if (pullPromise && !options.force) return pullPromise;
+
+    var maxAttempts = options.retries != null ? Number(options.retries) : 3;
+    if (!Number.isFinite(maxAttempts) || maxAttempts < 1) maxAttempts = 1;
+
+    function attempt(tryIndex) {
+      return fetchCloudDataOnce()
+        .then(function (data) {
+          processCloudFetchData(data, { skipActivePresetMutation: true });
+          setCloudSyncPhase("ok");
+          return data;
+        })
+        .catch(function (err) {
+          syncDbg("PULL", "pullPresetsToLocal:실패", {
+            attempt: tryIndex + 1,
+            maxAttempts: maxAttempts,
+            error: String(err && err.message ? err.message : err),
+          });
+          if (tryIndex + 1 < maxAttempts) {
+            var delay =
+              CLOUD_PULL_RETRY_DELAYS_MS[tryIndex + 1] != null
+                ? CLOUD_PULL_RETRY_DELAYS_MS[tryIndex + 1]
+                : 1500;
+            return new Promise(function (resolve) {
+              setTimeout(resolve, delay);
+            }).then(function () {
+              return attempt(tryIndex + 1);
+            });
+          }
+          console.warn(
+            "[MetisSheetSync] 클라우드 불러오기 실패, 로컬 데이터 사용:",
+            err
+          );
+          setCloudSyncPhase("error");
+          pullPromise = null;
+          return null;
+        });
+    }
+
+    pullPromise = attempt(0);
     return pullPromise;
   }
 
@@ -1046,18 +1186,24 @@
 
   /** timer.html: 클라우드 pull → preset id 결정 → timer-core/metis-audio 순차 로드 */
   function bootTimerPage(resolvePresetIdFn) {
-    return pullPresetsToLocal()
+    var resolveId =
+      typeof resolvePresetIdFn === "function"
+        ? resolvePresetIdFn
+        : resolveBootPresetId;
+
+    return pullPresetsToLocal({ retries: 3 })
       .catch(function () {
         return null;
       })
       .then(function () {
-        window.__METIS_TIMER_PRESET_ID = resolvePresetIdFn();
+        window.__METIS_TIMER_PRESET_ID = resolveId();
         return loadScript("timer-core.js");
       })
       .then(function () {
         if (global.MetisTimer && global.MetisTimer.syncAllPresetsMetadataFromStorage) {
           global.MetisTimer.syncAllPresetsMetadataFromStorage();
         }
+        ensureTimerStateBootstrapped();
         if (lastCloudPullData && lastCloudPullData.timerStates) {
           var bootPresetId =
             window.__METIS_TIMER_PRESET_ID != null
@@ -1078,9 +1224,7 @@
       .catch(function (err) {
         console.warn("[MetisSheetSync] 타이머 부팅 실패:", err);
         window.__METIS_TIMER_PRESET_ID =
-          typeof resolvePresetIdFn === "function"
-            ? resolvePresetIdFn()
-            : "preset_default";
+          typeof resolveId === "function" ? resolveId() : "preset_default";
         window.__METIS_TIMER_BOOT_DONE = true;
         window.dispatchEvent(new Event("metis-timer-boot-done"));
       });
@@ -1104,6 +1248,8 @@
     bindCloudSyncBadge: bindCloudSyncBadge,
     applyToLocal: applyToLocal,
     bootTimerPage: bootTimerPage,
+    resolveBootPresetId: resolveBootPresetId,
+    ensureTimerStateBootstrapped: ensureTimerStateBootstrapped,
     getLastCloudUpdatedAt: getLastCloudUpdatedAt,
     getLastCloudPullData: function () {
       return lastCloudPullData;

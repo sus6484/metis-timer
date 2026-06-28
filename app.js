@@ -200,6 +200,12 @@
   }
 
   function hydrateAllPresetTournaments() {
+    var raw = null;
+    try {
+      raw = localStorage.getItem(STORAGE.PRESETS);
+    } catch (e0) {}
+    if (!raw) return;
+
     var list = getPresets();
     var d = defaultRemote();
     var changed = false;
@@ -2167,15 +2173,16 @@
       MetisTimer.syncAllPresetsMetadataFromStorage();
     }
     remoteState = getRemote();
+    startCloudTimerSyncIfNeeded();
     if (isSessionOk()) {
       showScreen("remote");
       renderRemote();
       renderPresets();
       mirrorLocalSync();
       syncLastSeenFromStore();
-      startCloudTimerSyncIfNeeded();
     } else {
       showScreen("auth");
+      renderPresets();
       requestAnimationFrame(function () {
         if (pinInputs[0]) pinInputs[0].focus();
       });

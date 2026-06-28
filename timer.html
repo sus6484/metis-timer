@@ -893,54 +893,13 @@
       </div>
     </div>
 
-    <script>window.__METIS_ASSET_V = "20260701";</script>
-    <script src="metis-sheet-sync.js?v=20260701"></script>
+    <script>window.__METIS_ASSET_V = "20260702";</script>
+    <script src="metis-sheet-sync.js?v=20260702"></script>
     <script>
       (function () {
-        function resolveFallbackId() {
-          try {
-            var raw = localStorage.getItem("metis_blindPresets");
-            if (raw) {
-              var arr = JSON.parse(raw);
-              if (Array.isArray(arr) && arr.length) {
-                var aid = localStorage.getItem("metis_activePresetId");
-                if (
-                  aid &&
-                  arr.some(function (p) {
-                    return p && p.id === aid;
-                  })
-                ) {
-                  return aid;
-                }
-                return arr[0].id;
-              }
-            }
-          } catch (e) {}
-          return "preset_default";
-        }
-        function resolvePresetId() {
-          var params = new URLSearchParams(window.location.search);
-          var id = params.get("id");
-          if (id) {
-            try {
-              var raw2 = localStorage.getItem("metis_blindPresets");
-              if (raw2) {
-                var arr2 = JSON.parse(raw2);
-                var known =
-                  Array.isArray(arr2) &&
-                  arr2.some(function (p) {
-                    return p && p.id === id;
-                  });
-                if (!known) id = null;
-              }
-            } catch (e2) {
-              id = null;
-            }
-          }
-          if (!id) id = resolveFallbackId();
-          return id;
-        }
-        MetisSheetSync.bootTimerPage(resolvePresetId);
+        MetisSheetSync.bootTimerPage(function () {
+          return MetisSheetSync.resolveBootPresetId();
+        });
       })();
     </script>
     <script>
@@ -2156,6 +2115,7 @@
 
         MetisTimer.subscribeSync(refreshFromBroadcast);
         window.addEventListener("storage", refreshFromBroadcast);
+        window.addEventListener("metis-presets-bootstrapped", refreshFromBroadcast);
 
         if (window.MetisSheetSync && MetisSheetSync.startCloudTimerSync) {
           var pinnedPresetId = MetisTimer.getSyncPresetId
