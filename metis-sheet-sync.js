@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbyBqSCpy5-Xo1-CvIsbzNjJvzaFa3cSDHNTTyjhjPfXp3GrAaEmENwc7yC1ykgz4enPTw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260630",
+    assetVersion: "20260701",
   };
 
   /** 절충: 원본(350/800/2000/3000)과 공격적(100/400/1000/1500)의 중간 */

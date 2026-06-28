@@ -631,7 +631,7 @@
     MetisTimer.setSyncPresetId(getActivePresetId());
     MetisTimer.writeSyncState(buildFullSync(true), {
       skipPresetEmbed: true,
-      userAction: !!(options.bumpStats || options.userAction),
+      userAction: !!options.userAction,
       bumpStats: !!options.bumpStats,
       urgentCloudPush: !!options.urgentCloudPush,
     });
@@ -680,7 +680,7 @@
       entry: remoteState.entry,
       activePresetId: getActivePresetId(),
     });
-    persistTimerSync({ bumpStats: true, userAction: true, urgentCloudPush: true });
+    persistTimerSync({ bumpStats: true, urgentCloudPush: true });
     schedulePresetSnapshot();
   }
 

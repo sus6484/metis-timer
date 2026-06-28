@@ -759,11 +759,13 @@
   function isUserSyncAction(options) {
     options = options || {};
     if (options.preserveUpdatedAt || isTickSyncUpdate(options)) return false;
-    return !!(
-      options.userAction ||
-      options.bumpStats ||
-      options.urgentCloudPush
-    );
+    return !!(options.userAction || options.urgentCloudPush);
+  }
+
+  function isStatsSyncAction(options) {
+    options = options || {};
+    if (options.preserveUpdatedAt || isTickSyncUpdate(options)) return false;
+    return !!options.bumpStats;
   }
 
   /** 재생/브레이지 중이면 true (일시정지·대기중 제외) */
@@ -788,16 +790,28 @@
     var localExplicit = Number(localSlice.controlUpdatedAt) > 0;
     var cloudC = sliceControlUpdatedAt(cloudSlice);
     var localC = sliceControlUpdatedAt(localSlice);
+    var cloudTU = sliceTimerUpdatedAt(cloudSlice);
+    var localTU = sliceTimerUpdatedAt(localSlice);
 
     if (cloudExplicit && !cloudPlaying && localPlaying) {
+      if (cloudTU > localTU) return true;
       if (!localExplicit) return true;
       return cloudC > localC;
     }
     if (localExplicit && !localPlaying && cloudPlaying) {
+      if (cloudTU > localTU) return true;
       if (!cloudExplicit) return false;
       return cloudC > localC;
     }
     return cloudC > localC;
+  }
+
+  function applyCloudControlSlice(state, cloudSlice) {
+    copyCloudSliceOntoState(state, cloudSlice);
+    syncLevelField(state);
+    reconcileRunningEndAt(state, Date.now());
+    ensureTotalSecondsState(state);
+    state.displayTime = formatMMSS(remainingSec(state, Date.now()));
   }
 
   function assignSyncTimestamps(state, options) {
@@ -828,6 +842,18 @@
       return;
     }
 
+    if (isStatsSyncAction(options)) {
+      state.statsUpdatedAt = now;
+      state.updatedAt = Math.max(
+        now,
+        Number(state.timerUpdatedAt) || 0,
+        curSU,
+        curLA
+      );
+      syncDbg("PUSH", "assignSyncTimestamps:stats", statsSnippet(state));
+      if (!isUserSyncAction(options)) return;
+    }
+
     if (!isUserSyncAction(options)) {
       return;
     }
@@ -835,9 +861,6 @@
     state.lastActionTimestamp = now;
     state.controlUpdatedAt = now;
     state.timerUpdatedAt = now;
-    if (options.bumpStats) {
-      state.statsUpdatedAt = now;
-    }
     state.updatedAt = Math.max(now, curSU);
     syncDbg("PUSH", "assignSyncTimestamps:userAction", {
       lastActionTimestamp: state.lastActionTimestamp,
@@ -1034,12 +1057,26 @@
       },
     });
 
+    if (shouldForceApplyCloudControl(cloudSlice, localSlice)) {
+      applyCloudControlSlice(state, cloudSlice);
+      syncDbg("PULL", "applyTimerSyncSlice:control강제적용", {
+        cloudLA: cloudLA,
+        localLA: localLA,
+        merged: statsSnippet(state),
+      });
+      return true;
+    }
+
+    if (shouldForceApplyCloudControl(localSlice, cloudSlice)) {
+      syncDbg("PULL", "applyTimerSyncSlice:로컬control최신", {
+        cloudLA: cloudLA,
+        localLA: localLA,
+      });
+      return false;
+    }
+
     if (cloudLA > localLA) {
-      copyCloudSliceOntoState(state, cloudSlice);
-      syncLevelField(state);
-      reconcileRunningEndAt(state, Date.now());
-      ensureTotalSecondsState(state);
-      state.displayTime = formatMMSS(remainingSec(state, Date.now()));
+      applyCloudControlSlice(state, cloudSlice);
       syncDbg("PULL", "applyTimerSyncSlice:LWW전체적용", {
         lastActionTimestamp: cloudLA,
         merged: statsSnippet(state),
