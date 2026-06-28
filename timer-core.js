@@ -1152,11 +1152,7 @@
           slice: statsSnippet(cloudSlice),
         });
         global.MetisSheetSync.saveTimerStateToCloud(pushPresetId, cloudSlice, {
-          urgent: !!(
-            options.urgentCloudPush ||
-            options.cloudHeartbeat ||
-            options.autoTick
-          ),
+          urgent: !!options.urgentCloudPush,
         });
       } else {
         syncDbg("PUSH", "writeSyncState:pushPresetId없음", {
@@ -1587,7 +1583,7 @@
   }
 
   var lastCloudHeartbeatAt = 0;
-  var CLOUD_HEARTBEAT_MS = 1000;
+  var CLOUD_HEARTBEAT_MS = 3000;
 
   function needsCloudHeartbeat(state) {
     if (!state) return false;

@@ -8,15 +8,15 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbyBqSCpy5-Xo1-CvIsbzNjJvzaFa3cSDHNTTyjhjPfXp3GrAaEmENwc7yC1ykgz4enPTw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260629",
+    assetVersion: "20260630",
   };
 
-  /** 클라우드 동기화 지연 최소화 (Google Sheets 폴링 한도 내) */
-  var CLOUD_PUSH_DEBOUNCE_MS = 100;
-  var CLOUD_POLL_MS_ACTIVE = 400;
-  var CLOUD_POLL_MS_IDLE = 1000;
-  var CLOUD_POLL_MS_HIDDEN = 1500;
-  var CLOUD_POLL_MIN_GAP_MS = 50;
+  /** 절충: 원본(350/800/2000/3000)과 공격적(100/400/1000/1500)의 중간 */
+  var CLOUD_PUSH_DEBOUNCE_MS = 250;
+  var CLOUD_POLL_MS_ACTIVE = 600;
+  var CLOUD_POLL_MS_IDLE = 1500;
+  var CLOUD_POLL_MS_HIDDEN = 2500;
+  var CLOUD_POLL_MIN_GAP_MS = 100;
 
   var STORAGE_PRESETS = "metis_blindPresets";
   var STORAGE_ACTIVE = "metis_activePresetId";
