@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbyBqSCpy5-Xo1-CvIsbzNjJvzaFa3cSDHNTTyjhjPfXp3GrAaEmENwc7yC1ykgz4enPTw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260702",
+    assetVersion: "20260703",
   };
 
   var CLOUD_PULL_RETRY_DELAYS_MS = [0, 600, 1500];
@@ -37,6 +37,11 @@
   var cloudPollRunning = false;
   var cloudPollInFlight = false;
   var cloudVisibilityBound = false;
+  var cloudFocusBound = false;
+  var cloudPollPushAfterPull = false;
+  var cloudPollPendingImmediate = false;
+  var immediateSyncTimer = null;
+  var IMMEDIATE_SYNC_COALESCE_MS = 40;
   /** timer.html: { pinnedPresetId } — 이 창은 해당 프리셋만 동기화 */
   var cloudPollOptions = null;
 
@@ -455,6 +460,66 @@
     });
     if (localU > cloudU && cloudAhead) return;
     if (localU > cloudU) pushLocalPresetsToCloud();
+  }
+
+  /** pull 직후 로컬 타이머가 클라우드보다 앞서 있으면 즉시 push (페이지 열기·포커스용) */
+  function isLocalTimerAheadOfCloud(data) {
+    if (!global.MetisTimer || !global.MetisTimer.pickTimerSyncSlice) return false;
+    var presetId = resolveLocalTimerPresetId();
+    if (!presetId) return false;
+
+    global.MetisTimer.setSyncPresetId(presetId);
+    var localState = global.MetisTimer.readSyncState();
+    if (!localState) return false;
+
+    var localSlice = global.MetisTimer.pickTimerSyncSlice(localState, presetId);
+    var cloudSlice =
+      data && data.timerStates && data.timerStates[presetId];
+
+    if (!cloudSlice || typeof cloudSlice !== "object") {
+      return !!(
+        localSlice &&
+        (localSlice.hasStartedOnce ||
+          global.MetisTimer.sliceLastActionAt(localSlice) > 0)
+      );
+    }
+
+    var localLA = global.MetisTimer.sliceLastActionAt(localSlice);
+    var cloudLA = global.MetisTimer.sliceLastActionAt(cloudSlice);
+    if (localLA > cloudLA) return true;
+
+    if (global.MetisTimer.timerGameplayRank) {
+      var localRank = global.MetisTimer.timerGameplayRank(localSlice);
+      var cloudRank = global.MetisTimer.timerGameplayRank(cloudSlice);
+      if (localRank > cloudRank + 5) return true;
+      if (localRank > cloudRank && localLA >= cloudLA) return true;
+    }
+
+    return false;
+  }
+
+  function maybePushLocalTimerIfAheadOfCloud(data) {
+    if (!isLocalTimerAheadOfCloud(data)) {
+      syncDbg("PUSH", "maybePushLocalTimerIfAheadOfCloud:스킵", {
+        presetId: resolveLocalTimerPresetId(),
+      });
+      return;
+    }
+    if (!global.MetisTimer || !global.MetisTimer.pickTimerSyncSlice) return;
+
+    var presetId = resolveLocalTimerPresetId();
+    if (!presetId) return;
+
+    global.MetisTimer.setSyncPresetId(presetId);
+    var localState = global.MetisTimer.readSyncState();
+    if (!localState) return;
+
+    var localSlice = global.MetisTimer.pickTimerSyncSlice(localState, presetId);
+    syncDbg("PUSH", "maybePushLocalTimerIfAheadOfCloud:즉시push", {
+      presetId: presetId,
+      slice: statsSnippet(localSlice),
+    });
+    saveTimerStateToCloud(presetId, localSlice, { urgent: true });
   }
 
   function applyToLocal(data) {
@@ -876,10 +941,22 @@
     }
     cloudPollInFlight = true;
     var startedAt = Date.now();
+    var pushAfterPull = cloudPollPushAfterPull;
+    cloudPollPushAfterPull = false;
     pollTimerStatesFromCloud()
-      .then(notifyCloudPollResult)
+      .then(function (result) {
+        notifyCloudPollResult(result);
+        if (pushAfterPull) {
+          maybePushLocalTimerIfAheadOfCloud(result && result.data);
+        }
+      })
       .finally(function () {
         cloudPollInFlight = false;
+        if (cloudPollPendingImmediate) {
+          cloudPollPendingImmediate = false;
+          requestImmediateCloudSync();
+          return;
+        }
         if (!cloudPollRunning) return;
         var elapsed = Date.now() - startedAt;
         var delay = Math.max(
@@ -890,12 +967,35 @@
       });
   }
 
+  /** pull + (필요 시) push. 폴링 주기는 그대로, 탭 포커스·페이지 열기용 */
+  function requestImmediateCloudSync() {
+    if (!cloudPollRunning) return;
+    cloudPollPushAfterPull = true;
+    if (immediateSyncTimer) return;
+    immediateSyncTimer = setTimeout(function () {
+      immediateSyncTimer = null;
+      if (!cloudPollRunning) return;
+      if (cloudPollTimer) clearTimeout(cloudPollTimer);
+      cloudPollTimer = null;
+      if (cloudPollInFlight) {
+        cloudPollPendingImmediate = true;
+        return;
+      }
+      syncDbg("PULL", "requestImmediateCloudSync");
+      runCloudPollCycle();
+    }, IMMEDIATE_SYNC_COALESCE_MS);
+  }
+
   function onCloudVisibilityChange() {
     if (!cloudPollRunning || typeof document === "undefined") return;
     if (document.hidden) return;
-    if (cloudPollTimer) clearTimeout(cloudPollTimer);
-    cloudPollTimer = null;
-    runCloudPollCycle();
+    requestImmediateCloudSync();
+  }
+
+  function onCloudWindowFocus() {
+    if (!cloudPollRunning || typeof document === "undefined") return;
+    if (document.hidden) return;
+    requestImmediateCloudSync();
   }
 
   function bindCloudVisibilitySync() {
@@ -904,10 +1004,37 @@
     document.addEventListener("visibilitychange", onCloudVisibilityChange);
   }
 
+  function bindCloudFocusSync() {
+    if (cloudFocusBound || typeof window === "undefined") return;
+    cloudFocusBound = true;
+    window.addEventListener("focus", onCloudWindowFocus);
+  }
+
   function unbindCloudVisibilitySync() {
     if (!cloudVisibilityBound || typeof document === "undefined") return;
     cloudVisibilityBound = false;
     document.removeEventListener("visibilitychange", onCloudVisibilityChange);
+  }
+
+  function unbindCloudFocusSync() {
+    if (!cloudFocusBound || typeof window === "undefined") return;
+    cloudFocusBound = false;
+    window.removeEventListener("focus", onCloudWindowFocus);
+  }
+
+  function bindCloudImmediateSync() {
+    bindCloudVisibilitySync();
+    bindCloudFocusSync();
+  }
+
+  function unbindCloudImmediateSync() {
+    unbindCloudVisibilitySync();
+    unbindCloudFocusSync();
+    if (immediateSyncTimer) {
+      clearTimeout(immediateSyncTimer);
+      immediateSyncTimer = null;
+    }
+    cloudPollPendingImmediate = false;
   }
 
   function pollTimerStatesFromCloud(pollOptions) {
@@ -997,11 +1124,14 @@
       alreadyRunning: cloudPollRunning,
       pollOptions: cloudPollOptions,
     });
-    if (cloudPollRunning) return;
+    if (cloudPollRunning) {
+      requestImmediateCloudSync();
+      return;
+    }
     cloudPollRunning = true;
-    bindCloudVisibilitySync();
+    bindCloudImmediateSync();
     setCloudSyncPhase("syncing");
-    scheduleCloudTimerPoll();
+    requestImmediateCloudSync();
   }
 
   function stopCloudTimerSync() {
@@ -1009,7 +1139,7 @@
     cloudPollOnApplied = null;
     cloudPollOptions = null;
     cloudPollInFlight = false;
-    unbindCloudVisibilitySync();
+    unbindCloudImmediateSync();
     if (cloudPollTimer) {
       clearTimeout(cloudPollTimer);
       cloudPollTimer = null;
@@ -1215,6 +1345,7 @@
             });
           }
         }
+        maybePushLocalTimerIfAheadOfCloud(lastCloudPullData);
         return loadScript("metis-audio.js");
       })
       .then(function () {
@@ -1241,6 +1372,8 @@
     pullAndApplyPresetTimerState: pullAndApplyPresetTimerState,
     applyTimerStatesFromCloud: applyTimerStatesFromCloud,
     applyCloudPresetsIfNewer: applyCloudPresetsIfNewer,
+    requestImmediateCloudSync: requestImmediateCloudSync,
+    maybePushLocalTimerIfAheadOfCloud: maybePushLocalTimerIfAheadOfCloud,
     startCloudTimerSync: startCloudTimerSync,
     stopCloudTimerSync: stopCloudTimerSync,
     getCloudSyncStatus: getCloudSyncStatus,

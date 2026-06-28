@@ -14,6 +14,9 @@
       ? String(global.__METIS_TIMER_PRESET_ID)
       : "";
 
+  /** 이 탭에서 사용자 조작 전까지 클라우드 우선 수용 (부팅 grace) */
+  var sessionUserActionSeen = false;
+
   var bc = null;
 
   function syncPageTag() {
@@ -762,6 +765,31 @@
     return !!(options.userAction || options.urgentCloudPush);
   }
 
+  function isBootGraceActive() {
+    return !sessionUserActionSeen;
+  }
+
+  function markSessionUserInput(options) {
+    options = options || {};
+    if (options.preserveUpdatedAt || isTickSyncUpdate(options)) return;
+    if (options.userAction || options.urgentCloudPush || options.bumpStats) {
+      sessionUserActionSeen = true;
+    }
+  }
+
+  /** 부팅 grace: 클라우드가 더 최신이면 로컬 타임스탬프와 무관하게 적용 */
+  function isCloudNewerDuringGrace(cloudSlice, localSlice) {
+    if (!cloudSlice || typeof cloudSlice !== "object") return false;
+    if (!localSlice || typeof localSlice !== "object") return true;
+    if (sliceLastActionAt(cloudSlice) > sliceLastActionAt(localSlice)) return true;
+    if (shouldApplyCloudTimerSlice(cloudSlice, localSlice)) return true;
+    if (timerSyncUpdatedAt(cloudSlice) > timerSyncUpdatedAt(localSlice)) return true;
+    var cloudSU = sliceStatsUpdatedAt(cloudSlice);
+    var localSU = sliceStatsUpdatedAt(localSlice);
+    if (cloudSU > localSU && cloudSU > 0) return true;
+    return false;
+  }
+
   function isStatsSyncAction(options) {
     options = options || {};
     if (options.preserveUpdatedAt || isTickSyncUpdate(options)) return false;
@@ -851,6 +879,7 @@
         curLA
       );
       syncDbg("PUSH", "assignSyncTimestamps:stats", statsSnippet(state));
+      markSessionUserInput(options);
       if (!isUserSyncAction(options)) return;
     }
 
@@ -869,6 +898,7 @@
       entry: state.entry,
       isRunning: state.timer && state.timer.isRunning,
     });
+    markSessionUserInput(options);
   }
 
   /** 클라우드 슬라이스 전체를 로컬 state에 덮어쓴다 (LWW) */
@@ -1047,6 +1077,7 @@
       localHb: sliceHeartbeatAt(localSlice),
       cloudPlaying: isEffectivelyPlayingSlice(cloudSlice),
       localPlaying: isEffectivelyPlayingSlice(localSlice),
+      bootGrace: isBootGraceActive(),
       cloudStats: {
         player: cloudSlice.player,
         entry: cloudSlice.entry,
@@ -1056,6 +1087,16 @@
         entry: localSlice.entry,
       },
     });
+
+    if (isBootGraceActive() && isCloudNewerDuringGrace(cloudSlice, localSlice)) {
+      applyCloudControlSlice(state, cloudSlice);
+      syncDbg("PULL", "applyTimerSyncSlice:bootGrace클라우드적용", {
+        cloudLA: cloudLA,
+        localLA: localLA,
+        merged: statsSnippet(state),
+      });
+      return true;
+    }
 
     if (shouldForceApplyCloudControl(cloudSlice, localSlice)) {
       applyCloudControlSlice(state, cloudSlice);
@@ -1754,6 +1795,7 @@
     sliceControlUpdatedAt: sliceControlUpdatedAt,
     sliceLastActionAt: sliceLastActionAt,
     shouldForceApplyCloudControl: shouldForceApplyCloudControl,
+    isBootGraceActive: isBootGraceActive,
     isEffectivelyPlayingSlice: isEffectivelyPlayingSlice,
     isEffectivelyRunningTimer: isEffectivelyRunningTimer,
     reconcileRunningEndAt: reconcileRunningEndAt,
