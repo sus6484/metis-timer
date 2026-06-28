@@ -796,41 +796,25 @@
     return !!t.isRunning;
   }
 
+  function playStatesDiffer(cloudSlice, localSlice) {
+    return (
+      isEffectivelyPlayingSlice(cloudSlice) !==
+      isEffectivelyPlayingSlice(localSlice)
+    );
+  }
+
+  /** 재생/정지 전환은 lastActionTimestamp(LWW)만 따른다. heartbeat·timerUpdatedAt으로 덮지 않는다. */
+  function cloudHasNewerControlAction(cloudSlice, localSlice) {
+    return sliceLastActionAt(cloudSlice) > sliceLastActionAt(localSlice);
+  }
+
   /**
-   * 재생↔정지가 다르고 클라우드 쪽 조작 시각이 더 최신이면 무조건 적용한다.
+   * 재생↔정지가 다르고 클라우드 쪽 수동 조작 시각이 더 최신이면 적용한다.
    * (로컬이 돌아가는 중이어도 원격 일시정지를 따름)
    */
   function shouldForceApplyCloudControl(cloudSlice, localSlice) {
-    var cloudPlaying = isEffectivelyPlayingSlice(cloudSlice);
-    var localPlaying = isEffectivelyPlayingSlice(localSlice);
-    if (cloudPlaying === localPlaying) return false;
-
-    var cloudAction = sliceLastActionAt(cloudSlice);
-    var localAction = sliceLastActionAt(localSlice);
-    var cloudExplicit = Number(cloudSlice.controlUpdatedAt) > 0;
-    var localExplicit = Number(localSlice.controlUpdatedAt) > 0;
-    var cloudC = sliceControlUpdatedAt(cloudSlice);
-    var localC = sliceControlUpdatedAt(localSlice);
-    var cloudTU = sliceTimerUpdatedAt(cloudSlice);
-    var localTU = sliceTimerUpdatedAt(localSlice);
-
-    // cloudSlice=정지, localSlice=재생
-    if (cloudExplicit && !cloudPlaying && localPlaying) {
-      if (localAction > cloudAction) return false;
-      if (cloudAction > localAction) return true;
-      if (cloudTU > localTU) return true;
-      if (!localExplicit) return true;
-      return cloudC > localC;
-    }
-    // cloudSlice=재생, localSlice=정지 (일시정지 후 원격 시작 동기화)
-    if (localExplicit && !localPlaying && cloudPlaying) {
-      if (cloudAction > localAction) return true;
-      if (localAction > cloudAction) return false;
-      if (cloudTU > localTU) return true;
-      if (!cloudExplicit) return false;
-      return cloudC > localC;
-    }
-    return cloudC > localC;
+    if (!playStatesDiffer(cloudSlice, localSlice)) return false;
+    return cloudHasNewerControlAction(cloudSlice, localSlice);
   }
 
   function applyCloudControlSlice(state, cloudSlice) {
@@ -1041,7 +1025,15 @@
     if (shouldForceApplyCloudControl(localSlice, cloudSlice)) return false;
     var cloudU = sliceTimerUpdatedAt(cloudSlice);
     var localU = sliceTimerUpdatedAt(localSlice);
-    if (cloudU > localU) return true;
+    if (cloudU > localU) {
+      if (
+        playStatesDiffer(cloudSlice, localSlice) &&
+        !cloudHasNewerControlAction(cloudSlice, localSlice)
+      ) {
+        return false;
+      }
+      return true;
+    }
     if (cloudU < localU) {
       var cloudPlaying = isEffectivelyPlayingSlice(cloudSlice);
       var localPlaying = isEffectivelyPlayingSlice(localSlice);

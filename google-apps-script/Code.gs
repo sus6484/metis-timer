@@ -300,10 +300,16 @@ function mergeOneTimerState_(localSlice, remoteSlice) {
     return finalizeMerged_(localSlice, localSlice, remoteSlice);
   }
 
+  var localPlaying = isPlayingSlice_(localSlice);
+  var remotePlaying = isPlayingSlice_(remoteSlice);
+  if (localPlaying !== remotePlaying) {
+    var pauseWinner = localPlaying ? remoteSlice : localSlice;
+    return finalizeMerged_(pauseWinner, localSlice, remoteSlice);
+  }
+
   var localHb = sliceHb_(localSlice);
   var remoteHb = sliceHb_(remoteSlice);
-  var bothPlaying =
-    isPlayingSlice_(localSlice) && isPlayingSlice_(remoteSlice);
+  var bothPlaying = localPlaying && remotePlaying;
   var posWinner =
     bothPlaying && remoteHb >= localHb
       ? remoteSlice
