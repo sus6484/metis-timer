@@ -8,8 +8,15 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbyBqSCpy5-Xo1-CvIsbzNjJvzaFa3cSDHNTTyjhjPfXp3GrAaEmENwc7yC1ykgz4enPTw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260624",
+    assetVersion: "20260629",
   };
+
+  /** 클라우드 동기화 지연 최소화 (Google Sheets 폴링 한도 내) */
+  var CLOUD_PUSH_DEBOUNCE_MS = 100;
+  var CLOUD_POLL_MS_ACTIVE = 400;
+  var CLOUD_POLL_MS_IDLE = 1000;
+  var CLOUD_POLL_MS_HIDDEN = 1500;
+  var CLOUD_POLL_MIN_GAP_MS = 50;
 
   var STORAGE_PRESETS = "metis_blindPresets";
   var STORAGE_ACTIVE = "metis_activePresetId";
@@ -26,6 +33,8 @@
   var cloudPollTimer = null;
   var cloudPollOnApplied = null;
   var cloudPollRunning = false;
+  var cloudPollInFlight = false;
+  var cloudVisibilityBound = false;
   /** timer.html: { pinnedPresetId } — 이 창은 해당 프리셋만 동기화 */
   var cloudPollOptions = null;
 
@@ -729,7 +738,7 @@
       presetId: String(presetId),
       slice: statsSnippet(slice),
       urgent: !!options.urgent,
-      delayMs: options.urgent ? 0 : 350,
+      delayMs: options.urgent ? 0 : CLOUD_PUSH_DEBOUNCE_MS,
     });
     pendingTimerSave = {
       presetId: String(presetId),
@@ -737,7 +746,7 @@
     };
     if (timerSaveTimer) clearTimeout(timerSaveTimer);
     timerSaveTimer = null;
-    var delay = options.urgent ? 0 : 350;
+    var delay = options.urgent ? 0 : CLOUD_PUSH_DEBOUNCE_MS;
     if (delay <= 0) {
       setCloudSyncPhase("syncing");
       flushTimerSave();
@@ -751,14 +760,89 @@
   }
 
   function getCloudPollIntervalMs() {
-    if (typeof document !== "undefined" && document.hidden) return 3000;
+    if (typeof document !== "undefined" && document.hidden) {
+      return CLOUD_POLL_MS_HIDDEN;
+    }
     if (global.MetisTimer && global.MetisTimer.readSyncState) {
       var s = global.MetisTimer.readSyncState();
-      if (!s) return 2000;
-      if (s.timer && (s.timer.isRunning || s.timer.bridge)) return 800;
-      if (s.hasStartedOnce && (s.timerStatus || "") !== "대기중") return 800;
+      if (!s) return CLOUD_POLL_MS_IDLE;
+      if (s.timer && (s.timer.isRunning || s.timer.bridge)) {
+        return CLOUD_POLL_MS_ACTIVE;
+      }
+      if (s.hasStartedOnce && (s.timerStatus || "") !== "대기중") {
+        return CLOUD_POLL_MS_ACTIVE;
+      }
     }
-    return 2000;
+    return CLOUD_POLL_MS_IDLE;
+  }
+
+  function notifyCloudPollResult(result) {
+    if (!result || typeof cloudPollOnApplied !== "function") {
+      syncDbg("PULL", "6.cloudPoll:콜백스킵", {
+        hasResult: !!result,
+        hasOnApplied: typeof cloudPollOnApplied === "function",
+      });
+      return;
+    }
+    var ar = result.applyResult || emptyApplyResult();
+    var willNotify =
+      result.applied || result.presetsApplied || ar.leveledUp;
+    syncDbg("PULL", "6.cloudPoll:콜백판단", {
+      willNotify: willNotify,
+      applied: result.applied,
+      presetsApplied: result.presetsApplied,
+      leveledUp: ar.leveledUp,
+    });
+    if (willNotify) cloudPollOnApplied(result);
+  }
+
+  function scheduleNextCloudPoll(afterMs) {
+    if (!cloudPollRunning) return;
+    if (cloudPollTimer) clearTimeout(cloudPollTimer);
+    cloudPollTimer = setTimeout(runCloudPollCycle, afterMs);
+  }
+
+  function runCloudPollCycle() {
+    if (!cloudPollRunning) return;
+    cloudPollTimer = null;
+    if (cloudPollInFlight) {
+      scheduleNextCloudPoll(getCloudPollIntervalMs());
+      return;
+    }
+    cloudPollInFlight = true;
+    var startedAt = Date.now();
+    pollTimerStatesFromCloud()
+      .then(notifyCloudPollResult)
+      .finally(function () {
+        cloudPollInFlight = false;
+        if (!cloudPollRunning) return;
+        var elapsed = Date.now() - startedAt;
+        var delay = Math.max(
+          CLOUD_POLL_MIN_GAP_MS,
+          getCloudPollIntervalMs() - elapsed
+        );
+        scheduleNextCloudPoll(delay);
+      });
+  }
+
+  function onCloudVisibilityChange() {
+    if (!cloudPollRunning || typeof document === "undefined") return;
+    if (document.hidden) return;
+    if (cloudPollTimer) clearTimeout(cloudPollTimer);
+    cloudPollTimer = null;
+    runCloudPollCycle();
+  }
+
+  function bindCloudVisibilitySync() {
+    if (cloudVisibilityBound || typeof document === "undefined") return;
+    cloudVisibilityBound = true;
+    document.addEventListener("visibilitychange", onCloudVisibilityChange);
+  }
+
+  function unbindCloudVisibilitySync() {
+    if (!cloudVisibilityBound || typeof document === "undefined") return;
+    cloudVisibilityBound = false;
+    document.removeEventListener("visibilitychange", onCloudVisibilityChange);
   }
 
   function pollTimerStatesFromCloud(pollOptions) {
@@ -833,35 +917,7 @@
 
   function scheduleCloudTimerPoll() {
     if (!cloudPollRunning) return;
-    if (cloudPollTimer) clearTimeout(cloudPollTimer);
-    cloudPollTimer = setTimeout(function () {
-      cloudPollTimer = null;
-      pollTimerStatesFromCloud()
-        .then(function (result) {
-          if (!result || typeof cloudPollOnApplied !== "function") {
-            syncDbg("PULL", "6.scheduleCloudTimerPoll:콜백스킵", {
-              hasResult: !!result,
-              hasOnApplied: typeof cloudPollOnApplied === "function",
-            });
-            return;
-          }
-          var ar = result.applyResult || emptyApplyResult();
-          var willNotify =
-            result.applied ||
-            result.presetsApplied ||
-            ar.leveledUp;
-          syncDbg("PULL", "6.scheduleCloudTimerPoll:콜백판단", {
-            willNotify: willNotify,
-            applied: result.applied,
-            presetsApplied: result.presetsApplied,
-            leveledUp: ar.leveledUp,
-          });
-          if (willNotify) {
-            cloudPollOnApplied(result);
-          }
-        })
-        .finally(scheduleCloudTimerPoll);
-    }, getCloudPollIntervalMs());
+    scheduleNextCloudPoll(0);
   }
 
   function startCloudTimerSync(onApplied, options) {
@@ -878,6 +934,7 @@
     });
     if (cloudPollRunning) return;
     cloudPollRunning = true;
+    bindCloudVisibilitySync();
     setCloudSyncPhase("syncing");
     scheduleCloudTimerPoll();
   }
@@ -886,6 +943,8 @@
     cloudPollRunning = false;
     cloudPollOnApplied = null;
     cloudPollOptions = null;
+    cloudPollInFlight = false;
+    unbindCloudVisibilitySync();
     if (cloudPollTimer) {
       clearTimeout(cloudPollTimer);
       cloudPollTimer = null;

@@ -1151,11 +1151,13 @@
           skipCloudPush: !!options.skipCloudPush,
           slice: statsSnippet(cloudSlice),
         });
-        global.MetisSheetSync.saveTimerStateToCloud(
-          pushPresetId,
-          cloudSlice,
-          { urgent: !!options.urgentCloudPush }
-        );
+        global.MetisSheetSync.saveTimerStateToCloud(pushPresetId, cloudSlice, {
+          urgent: !!(
+            options.urgentCloudPush ||
+            options.cloudHeartbeat ||
+            options.autoTick
+          ),
+        });
       } else {
         syncDbg("PUSH", "writeSyncState:pushPresetId없음", {
           syncPresetId: syncPresetId,
@@ -1585,7 +1587,7 @@
   }
 
   var lastCloudHeartbeatAt = 0;
-  var CLOUD_HEARTBEAT_MS = 5000;
+  var CLOUD_HEARTBEAT_MS = 1000;
 
   function needsCloudHeartbeat(state) {
     if (!state) return false;
