@@ -188,13 +188,6 @@ input {
   cursor: not-allowed;
 }
 
-.auth-foot {
-  margin-top: 20px;
-  text-align: center;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-
 /* ——— Remote screen ——— */
 .remote-body {
   flex: 1;
