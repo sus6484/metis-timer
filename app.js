@@ -221,7 +221,7 @@
         changed = true;
       }
     });
-    if (changed) savePresets(list);
+    if (changed) savePresets(list, { skipCloudPush: true });
   }
 
   function migrateFontScales(state) {
@@ -509,7 +509,13 @@
   function applyImportedPreset(preset) {
     var list = getPresets().slice();
     list.push(preset);
-    savePresets(list);
+    savePresets(list, { skipCloudPush: true });
+    if (window.MetisSheetSync) {
+      MetisSheetSync.savePresetsToCloud(list, preset.id, {
+        changedPresetIds: [preset.id],
+        urgent: true,
+      });
+    }
     renderPresets();
     activatePreset(preset.id).then(function () {
       alert('프리셋 "' + preset.name + '" 을(를) 가져왔습니다.');
@@ -544,20 +550,24 @@
   }
 
   function setActivePresetId(id) {
-    var prev = getActivePresetId();
     localStorage.setItem(STORAGE.ACTIVE_PRESET_ID, id);
     MetisTimer.setSyncPresetId(id);
-    if (window.MetisSheetSync) {
-      MetisSheetSync.savePresetsToCloud(getPresets(), id, {
-        activePresetChanged: prev !== id,
-      });
+    if (window.MetisSheetSync && MetisSheetSync.updateCloudPollPinnedPreset) {
+      MetisSheetSync.updateCloudPollPinnedPreset(id);
     }
   }
 
   /** 프리셋 전환: 클라우드 타이머 상태 pull 후 리모트·로컬 동기화 */
   function activatePreset(id) {
     mergeRemoteIntoActivePreset();
+    var prevId = getActivePresetId();
     setActivePresetId(id);
+    if (prevId && prevId !== id && window.MetisSheetSync) {
+      MetisSheetSync.savePresetsToCloud(getPresets(), prevId, {
+        changedPresetIds: [prevId],
+        urgent: true,
+      });
+    }
     if (presetSelect) presetSelect.value = id;
     renderPresets();
     if (MetisTimer.applyActivePresetMetadataOnSwitch) {
@@ -611,10 +621,17 @@
 
   function persistTimerSync(options) {
     options = options || {};
+    console.log("[MetisSync|PUSH|app:persistTimerSync] (index.html)", {
+      bumpStats: !!options.bumpStats,
+      urgentCloudPush: !!options.urgentCloudPush,
+      player: remoteState.player,
+      entry: remoteState.entry,
+    });
     clampPlayerEntry(remoteState);
     MetisTimer.setSyncPresetId(getActivePresetId());
     MetisTimer.writeSyncState(buildFullSync(true), {
       skipPresetEmbed: true,
+      userAction: !!(options.bumpStats || options.userAction),
       bumpStats: !!options.bumpStats,
       urgentCloudPush: !!options.urgentCloudPush,
     });
@@ -658,7 +675,12 @@
   }
 
   function pushRemoteLive() {
-    persistTimerSync({ bumpStats: true, urgentCloudPush: true });
+    console.log("[MetisSync|PUSH|app:pushRemoteLive] (index.html)", {
+      player: remoteState.player,
+      entry: remoteState.entry,
+      activePresetId: getActivePresetId(),
+    });
+    persistTimerSync({ bumpStats: true, userAction: true, urgentCloudPush: true });
     schedulePresetSnapshot();
   }
 
@@ -733,7 +755,7 @@
         MetisTimer.remainingSec(s, now)
       );
     }
-    MetisTimer.writeSyncState(s, { urgentCloudPush: true });
+    MetisTimer.writeSyncState(s, { userAction: true, urgentCloudPush: true });
     applySyncToRemoteState(s);
   }
 
@@ -804,6 +826,7 @@
   function startCloudTimerSyncIfNeeded() {
     if (cloudTimerSyncStarted || !window.MetisSheetSync) return;
     cloudTimerSyncStarted = true;
+    console.log("[MetisSync|PULL|app:startCloudTimerSyncIfNeeded] (index.html)");
     if (MetisSheetSync.bindCloudSyncBadge) {
       MetisSheetSync.bindCloudSyncBadge("cloud-sync-badge");
     }
@@ -811,22 +834,42 @@
       var ar =
         result && result.applyResult
           ? result.applyResult
-          : { activePresetChanged: false };
+          : {};
       MetisTimer.setSyncPresetId(getActivePresetId());
+      var s = MetisTimer.readSyncState();
+      var cloudApplied = !!(result && result.applied);
+      var willRender =
+        cloudApplied ||
+        (result && result.presetsApplied) ||
+        (s && (s.updatedAt || 0) > lastRemoteSeenUpdated);
+      console.log("[MetisSync|PULL|app:cloudPoll콜백]", {
+        applied: cloudApplied,
+        presetsApplied: result && result.presetsApplied,
+        applyResult: ar,
+        lastRemoteSeenUpdated: lastRemoteSeenUpdated,
+        stateUpdatedAt: s && s.updatedAt,
+        stateLastAction: s && s.lastActionTimestamp,
+        stateStats: s
+          ? { player: s.player, entry: s.entry, statsUpdatedAt: s.statsUpdatedAt }
+          : null,
+        willRender: willRender,
+        screenActive: screenRemote.classList.contains("is-active"),
+      });
       if (result && result.presetsApplied) {
         renderPresets();
       }
-      if (ar.activePresetChanged) {
-        if (presetSelect) presetSelect.value = getActivePresetId();
-        renderPresets();
-      }
-      var s = MetisTimer.readSyncState();
       if (!s) return;
-      if ((s.updatedAt || 0) > lastRemoteSeenUpdated || result.presetsApplied) {
-        lastRemoteSeenUpdated = s.updatedAt || lastRemoteSeenUpdated;
+      if (willRender) {
+        lastRemoteSeenUpdated = Math.max(
+          lastRemoteSeenUpdated,
+          s.updatedAt || 0,
+          s.lastActionTimestamp || 0
+        );
         remoteState = getRemote();
         if (screenRemote.classList.contains("is-active")) renderRemote();
       }
+    }, {
+      pinnedPresetId: getActivePresetId() || undefined,
     });
   }
 
@@ -1408,7 +1451,13 @@
           var next = presets.filter(function (x) {
             return x.id !== p.id;
           });
-          savePresets(next);
+          savePresets(next, { skipCloudPush: true });
+          if (window.MetisSheetSync) {
+            MetisSheetSync.savePresetsToCloud(next, getActivePresetId(), {
+              deletedPresetIds: [p.id],
+              urgent: true,
+            });
+          }
           if (getActivePresetId() === p.id) setActivePresetId("");
           renderPresets();
           persistAll();
@@ -1867,7 +1916,17 @@
         )
       );
     }
-    savePresets(list);
+    var savedPresetId = editingPresetId;
+    if (!savedPresetId && list.length) {
+      savedPresetId = list[list.length - 1].id;
+    }
+    savePresets(list, { skipCloudPush: true });
+    if (savedPresetId && window.MetisSheetSync) {
+      MetisSheetSync.savePresetsToCloud(list, savedPresetId, {
+        changedPresetIds: [savedPresetId],
+        urgent: true,
+      });
+    }
     closeModal();
     renderPresets();
     persistAll();
@@ -1891,7 +1950,7 @@
       return;
     }
     MetisTimer.applyStartOrResume(s, now);
-    MetisTimer.writeSyncState(s, { urgentCloudPush: true });
+    MetisTimer.writeSyncState(s, { userAction: true, urgentCloudPush: true });
     applySyncToRemoteState(s);
     renderRemote();
   }
@@ -1899,7 +1958,7 @@
   function doPause() {
     var s = MetisTimer.readSyncState() || buildFullSync();
     MetisTimer.applyPause(s, Date.now());
-    MetisTimer.writeSyncState(s, { urgentCloudPush: true });
+    MetisTimer.writeSyncState(s, { userAction: true, urgentCloudPush: true });
     applySyncToRemoteState(s);
     renderRemote();
   }
@@ -1907,7 +1966,7 @@
   function doRefresh() {
     var s = MetisTimer.readSyncState() || buildFullSync();
     MetisTimer.applyLevelRefresh(s, Date.now());
-    MetisTimer.writeSyncState(s, { urgentCloudPush: true });
+    MetisTimer.writeSyncState(s, { userAction: true, urgentCloudPush: true });
     applySyncToRemoteState(s);
     renderRemote();
   }
@@ -1939,7 +1998,7 @@
       s.displayTime = "00:00";
     }
 
-    MetisTimer.writeSyncState(s, { urgentCloudPush: true });
+    MetisTimer.writeSyncState(s, { userAction: true, urgentCloudPush: true });
     applySyncToRemoteState(s);
     renderRemote();
   }

@@ -16,6 +16,37 @@
 
   var bc = null;
 
+  function syncPageTag() {
+    try {
+      if (typeof location === "undefined" || !location.pathname) return "?";
+      var p = location.pathname.split("/").pop();
+      return p || location.pathname;
+    } catch (e0) {
+      return "?";
+    }
+  }
+
+  /** @param {"PUSH"|"PULL"} phase @param {string} step */
+  function syncDbg(phase, step, detail) {
+    var msg = "[MetisSync|" + phase + "|" + step + "] (" + syncPageTag() + ")";
+    if (detail === undefined) console.log(msg);
+    else console.log(msg, detail);
+  }
+
+  function statsSnippet(state) {
+    if (!state || typeof state !== "object") return null;
+    return {
+      player: state.player,
+      entry: state.entry,
+      entryChips: state.entryChips,
+      timerUpdatedAt: state.timerUpdatedAt,
+      controlUpdatedAt: state.controlUpdatedAt,
+      lastActionTimestamp: state.lastActionTimestamp,
+      statsUpdatedAt: state.statsUpdatedAt,
+      updatedAt: state.updatedAt,
+    };
+  }
+
   function getSyncStorageKey() {
     return syncPresetId ? "timer_state_" + syncPresetId : LEGACY_SYNC_KEY;
   }
@@ -579,7 +610,6 @@
   ];
 
   var TIMER_SYNC_KEYS = [
-    "activePresetId",
     "timer",
     "player",
     "entry",
@@ -593,6 +623,9 @@
     "totalScheduleCommittedSec",
     "timerUpdatedAt",
     "statsUpdatedAt",
+    "controlUpdatedAt",
+    "heartbeatAt",
+    "lastActionTimestamp",
     "updatedAt",
   ];
 
@@ -639,6 +672,16 @@
     if (!Number.isFinite(tu) || tu <= 0) out.timerUpdatedAt = u;
     var su = Number(out.statsUpdatedAt);
     if (!Number.isFinite(su) || su <= 0) out.statsUpdatedAt = u;
+    var cu = Number(out.controlUpdatedAt);
+    if (!Number.isFinite(cu) || cu <= 0) out.controlUpdatedAt = out.timerUpdatedAt;
+    var la = Number(out.lastActionTimestamp);
+    if (!Number.isFinite(la) || la <= 0) {
+      la = Math.max(
+        Number.isFinite(cu) && cu > 0 ? cu : 0,
+        Number.isFinite(su) && su > 0 ? su : 0
+      );
+      if (la > 0) out.lastActionTimestamp = la;
+    }
     if (
       out.timer &&
       out.timer.isRunning &&
@@ -679,24 +722,201 @@
     return timerSyncUpdatedAt(slice);
   }
 
+  function sliceControlUpdatedAt(slice) {
+    if (!slice) return 0;
+    var cu = Number(slice.controlUpdatedAt);
+    if (Number.isFinite(cu) && cu > 0) return cu;
+    return sliceTimerUpdatedAt(slice);
+  }
+
+  function sliceHeartbeatAt(slice) {
+    if (!slice) return 0;
+    var hb = Number(slice.heartbeatAt);
+    return Number.isFinite(hb) && hb > 0 ? hb : 0;
+  }
+
+  /**
+   * 사용자 수동 조작 시각 (LWW 기준).
+   * tick/heartbeat는 이 값을 갱신하지 않는다.
+   */
+  function sliceLastActionAt(slice) {
+    if (!slice) return 0;
+    var la = Number(slice.lastActionTimestamp);
+    if (Number.isFinite(la) && la > 0) return la;
+    var cu = Number(slice.controlUpdatedAt);
+    var su = Number(slice.statsUpdatedAt);
+    var max = 0;
+    if (Number.isFinite(cu) && cu > 0) max = Math.max(max, cu);
+    if (Number.isFinite(su) && su > 0) max = Math.max(max, su);
+    return max;
+  }
+
+  function isTickSyncUpdate(options) {
+    options = options || {};
+    return !!(options.cloudHeartbeat || options.autoTick);
+  }
+
+  function isUserSyncAction(options) {
+    options = options || {};
+    if (options.preserveUpdatedAt || isTickSyncUpdate(options)) return false;
+    return !!(
+      options.userAction ||
+      options.bumpStats ||
+      options.urgentCloudPush
+    );
+  }
+
+  /** 재생/브레이지 중이면 true (일시정지·대기중 제외) */
+  function isEffectivelyPlayingSlice(slice) {
+    if (!slice || typeof slice !== "object") return false;
+    var t = slice.timer;
+    if (!t) return false;
+    if (t.bridge) return true;
+    return !!t.isRunning;
+  }
+
+  /**
+   * 재생↔정지가 다르고 클라우드 쪽 조작 시각이 더 최신이면 무조건 적용한다.
+   * (로컬이 돌아가는 중이어도 원격 일시정지를 따름)
+   */
+  function shouldForceApplyCloudControl(cloudSlice, localSlice) {
+    var cloudPlaying = isEffectivelyPlayingSlice(cloudSlice);
+    var localPlaying = isEffectivelyPlayingSlice(localSlice);
+    if (cloudPlaying === localPlaying) return false;
+
+    var cloudExplicit = Number(cloudSlice.controlUpdatedAt) > 0;
+    var localExplicit = Number(localSlice.controlUpdatedAt) > 0;
+    var cloudC = sliceControlUpdatedAt(cloudSlice);
+    var localC = sliceControlUpdatedAt(localSlice);
+
+    if (cloudExplicit && !cloudPlaying && localPlaying) {
+      if (!localExplicit) return true;
+      return cloudC > localC;
+    }
+    if (localExplicit && !localPlaying && cloudPlaying) {
+      if (!cloudExplicit) return false;
+      return cloudC > localC;
+    }
+    return cloudC > localC;
+  }
+
   function assignSyncTimestamps(state, options) {
     options = options || {};
-    if (options.preserveUpdatedAt) return;
-    var now = Date.now();
-    var curTU = Number(state.timerUpdatedAt) || 0;
-    var curSU = Number(state.statsUpdatedAt) || 0;
-    if (options.cloudHeartbeat) {
-      state.timerUpdatedAt = now;
-      state.updatedAt = Math.max(now, curSU);
+    if (options.preserveUpdatedAt) {
+      syncDbg("PUSH", "assignSyncTimestamps:preserveUpdatedAt", statsSnippet(state));
       return;
     }
+    var now = Date.now();
+    var curSU = Number(state.statsUpdatedAt) || 0;
+    var curLA = Number(state.lastActionTimestamp) || 0;
+
+    if (isTickSyncUpdate(options)) {
+      state.heartbeatAt = now;
+      state.updatedAt = Math.max(
+        state.updatedAt || 0,
+        now,
+        Number(state.timerUpdatedAt) || 0,
+        curSU,
+        curLA
+      );
+      syncDbg("PUSH", "assignSyncTimestamps:tick", {
+        autoTick: !!options.autoTick,
+        cloudHeartbeat: !!options.cloudHeartbeat,
+        heartbeatAt: state.heartbeatAt,
+        lastActionTimestamp: state.lastActionTimestamp,
+      });
+      return;
+    }
+
+    if (!isUserSyncAction(options)) {
+      return;
+    }
+
+    state.lastActionTimestamp = now;
+    state.controlUpdatedAt = now;
+    state.timerUpdatedAt = now;
     if (options.bumpStats) {
       state.statsUpdatedAt = now;
-      state.updatedAt = Math.max(now, curTU);
-      return;
     }
-    state.timerUpdatedAt = now;
     state.updatedAt = Math.max(now, curSU);
+    syncDbg("PUSH", "assignSyncTimestamps:userAction", {
+      lastActionTimestamp: state.lastActionTimestamp,
+      bumpStats: !!options.bumpStats,
+      player: state.player,
+      entry: state.entry,
+      isRunning: state.timer && state.timer.isRunning,
+    });
+  }
+
+  /** 클라우드 슬라이스 전체를 로컬 state에 덮어쓴다 (LWW) */
+  function copyCloudSliceOntoState(state, cloudSlice) {
+    for (var ti = 0; ti < TIMER_FIELD_SYNC_KEYS.length; ti++) {
+      var tk = TIMER_FIELD_SYNC_KEYS[ti];
+      if (cloudSlice[tk] === undefined) continue;
+      if (tk === "timer") {
+        state.timer = normalizeTimer(cloudSlice.timer, state);
+      } else if (tk === "pendingBridge") {
+        state.pendingBridge = copyPendingBridgeForSync(cloudSlice.pendingBridge);
+      } else if (tk === "hasStartedOnce") {
+        state.hasStartedOnce = !!cloudSlice.hasStartedOnce;
+      } else {
+        state[tk] = cloudSlice[tk];
+      }
+    }
+    for (var si = 0; si < STATS_SYNC_KEYS.length; si++) {
+      var sk = STATS_SYNC_KEYS[si];
+      if (cloudSlice[sk] !== undefined) state[sk] = cloudSlice[sk];
+    }
+    if (cloudSlice.presetId) {
+      state.presetId = String(cloudSlice.presetId);
+    }
+    // activePresetId는 기기 로컬 UI 전용 — 클라우드 슬라이스로 덮어쓰지 않음
+    if (syncPresetId) {
+      state.activePresetId = syncPresetId;
+    } else if (cloudSlice.presetId) {
+      state.activePresetId = String(cloudSlice.presetId);
+    }
+    var tsKeys = [
+      "timerUpdatedAt",
+      "statsUpdatedAt",
+      "controlUpdatedAt",
+      "heartbeatAt",
+      "lastActionTimestamp",
+      "updatedAt",
+    ];
+    for (var xi = 0; xi < tsKeys.length; xi++) {
+      var xk = tsKeys[xi];
+      if (cloudSlice[xk] != null && Number(cloudSlice[xk]) > 0) {
+        state[xk] = Number(cloudSlice[xk]);
+      }
+    }
+  }
+
+  /** tick 전용: 재생 중 양쪽 모두일 때 위치(endAt·displayTime)만 동기화 */
+  function applyCloudTickSlice(state, cloudSlice) {
+    if (!cloudSlice.timer) return false;
+    var t = normalizeTimer(state.timer, state);
+    var ct = normalizeTimer(cloudSlice.timer, state);
+    if (ct.endAt != null && Number.isFinite(ct.endAt)) {
+      t.endAt = ct.endAt;
+    }
+    if (ct.pausedRemainingSec !== undefined) {
+      t.pausedRemainingSec = ct.pausedRemainingSec;
+    }
+    if (ct.bridge !== undefined) {
+      t.bridge = ct.bridge;
+    }
+    t.isRunning = !!ct.isRunning;
+    state.timer = t;
+    if (cloudSlice.displayTime !== undefined) {
+      state.displayTime = cloudSlice.displayTime;
+    }
+    if (cloudSlice.timerStatus !== undefined) {
+      state.timerStatus = cloudSlice.timerStatus;
+    }
+    var cloudHb = sliceHeartbeatAt(cloudSlice);
+    if (cloudHb > 0) state.heartbeatAt = cloudHb;
+    return true;
   }
 
   /** isRunning인데 endAt이 없으면 보정 — pausedRemainingSec만 쓰면 기기마다 30초+ 어긋남 */
@@ -765,10 +985,15 @@
   function shouldApplyCloudTimerSlice(cloudSlice, localSlice) {
     if (!cloudSlice || typeof cloudSlice !== "object") return false;
     if (!localSlice || typeof localSlice !== "object") return true;
+    if (shouldForceApplyCloudControl(cloudSlice, localSlice)) return true;
+    if (shouldForceApplyCloudControl(localSlice, cloudSlice)) return false;
     var cloudU = sliceTimerUpdatedAt(cloudSlice);
     var localU = sliceTimerUpdatedAt(localSlice);
     if (cloudU > localU) return true;
     if (cloudU < localU) {
+      var cloudPlaying = isEffectivelyPlayingSlice(cloudSlice);
+      var localPlaying = isEffectivelyPlayingSlice(localSlice);
+      if (localPlaying && !cloudPlaying) return false;
       var cloudRank = timerGameplayRank(cloudSlice);
       var localRank = timerGameplayRank(localSlice);
       if (cloudRank > localRank + 5) return true;
@@ -779,68 +1004,78 @@
 
   /**
    * 클라우드 슬라이스를 로컬 state에 병합한다.
-   * 타이머(timerUpdatedAt)와 인원(statsUpdatedAt)을 분리해 heartbeat가 인원을 덮지 않게 한다.
+   * lastActionTimestamp LWW: 클라우드가 더 최신이면 전체 덮어쓰기.
+   * 동일 조작 세대에서는 tick(heartbeat)만 위치 동기화.
    * @returns {boolean} 변경 여부
    */
   function applyTimerSyncSlice(state, cloudSlice) {
-    if (!state || !cloudSlice || typeof cloudSlice !== "object") return false;
+    if (!state || !cloudSlice || typeof cloudSlice !== "object") {
+      syncDbg("PULL", "applyTimerSyncSlice:인자없음");
+      return false;
+    }
     var localSlice = pickTimerSyncSlice(state);
-    var cloudTU = sliceTimerUpdatedAt(cloudSlice);
-    var localTU = sliceTimerUpdatedAt(localSlice);
-    var cloudSU = sliceStatsUpdatedAt(cloudSlice);
-    var localSU = sliceStatsUpdatedAt(localSlice);
-    var applyTimer =
-      shouldApplyCloudTimerSlice(cloudSlice, localSlice) || cloudTU > localTU;
-    var applyStats = cloudSU > localSU;
-    if (!applyTimer && !applyStats) return false;
+    var cloudLA = sliceLastActionAt(cloudSlice);
+    var localLA = sliceLastActionAt(localSlice);
 
-    if (applyTimer) {
-      for (var ti = 0; ti < TIMER_FIELD_SYNC_KEYS.length; ti++) {
-        var tk = TIMER_FIELD_SYNC_KEYS[ti];
-        if (cloudSlice[tk] === undefined) continue;
-        if (tk === "timer") {
-          state.timer = normalizeTimer(cloudSlice.timer, state);
-        } else if (tk === "pendingBridge") {
-          state.pendingBridge = copyPendingBridgeForSync(cloudSlice.pendingBridge);
-        } else if (tk === "hasStartedOnce") {
-          state.hasStartedOnce = !!cloudSlice.hasStartedOnce;
-        } else {
-          state[tk] = cloudSlice[tk];
-        }
-      }
-      if (cloudTU > 0) state.timerUpdatedAt = cloudTU;
-    }
+    syncDbg("PULL", "applyTimerSyncSlice:판단", {
+      cloudLA: cloudLA,
+      localLA: localLA,
+      cloudHb: sliceHeartbeatAt(cloudSlice),
+      localHb: sliceHeartbeatAt(localSlice),
+      cloudPlaying: isEffectivelyPlayingSlice(cloudSlice),
+      localPlaying: isEffectivelyPlayingSlice(localSlice),
+      cloudStats: {
+        player: cloudSlice.player,
+        entry: cloudSlice.entry,
+      },
+      localStats: {
+        player: localSlice.player,
+        entry: localSlice.entry,
+      },
+    });
 
-    if (applyStats) {
-      for (var si = 0; si < STATS_SYNC_KEYS.length; si++) {
-        var sk = STATS_SYNC_KEYS[si];
-        if (cloudSlice[sk] === undefined) continue;
-        state[sk] = cloudSlice[sk];
-      }
-      if (cloudSU > 0) state.statsUpdatedAt = cloudSU;
+    if (cloudLA > localLA) {
+      copyCloudSliceOntoState(state, cloudSlice);
+      syncLevelField(state);
+      reconcileRunningEndAt(state, Date.now());
+      ensureTotalSecondsState(state);
+      state.displayTime = formatMMSS(remainingSec(state, Date.now()));
+      syncDbg("PULL", "applyTimerSyncSlice:LWW전체적용", {
+        lastActionTimestamp: cloudLA,
+        merged: statsSnippet(state),
+      });
+      return true;
     }
 
-    if (cloudSlice.activePresetId != null && String(cloudSlice.activePresetId) !== "") {
-      state.activePresetId = String(cloudSlice.activePresetId);
+    if (localLA > cloudLA) {
+      syncDbg("PULL", "applyTimerSyncSlice:로컬조작최신_클라우드무시", {
+        localLA: localLA,
+        cloudLA: cloudLA,
+      });
+      return false;
     }
-    if (cloudSlice.presetId && !state.activePresetId) {
-      state.activePresetId = String(cloudSlice.presetId);
+
+    var cloudHb = sliceHeartbeatAt(cloudSlice);
+    var localHb = sliceHeartbeatAt(localSlice);
+    if (cloudHb <= localHb) {
+      syncDbg("PULL", "applyTimerSyncSlice:tick스킵", { cloudHb: cloudHb, localHb: localHb });
+      return false;
     }
-    if (cloudSlice.updatedAt != null) {
-      var legacyU = Number(cloudSlice.updatedAt);
-      if (Number.isFinite(legacyU) && legacyU > 0) {
-        state.updatedAt = Math.max(
-          state.updatedAt || 0,
-          legacyU,
-          state.timerUpdatedAt || 0,
-          state.statsUpdatedAt || 0
-        );
-      }
+
+    if (
+      !isEffectivelyPlayingSlice(cloudSlice) ||
+      !isEffectivelyPlayingSlice(localSlice)
+    ) {
+      syncDbg("PULL", "applyTimerSyncSlice:tick비재생상태");
+      return false;
     }
-    syncLevelField(state);
+
+    applyCloudTickSlice(state, cloudSlice);
     reconcileRunningEndAt(state, Date.now());
-    ensureTotalSecondsState(state);
     state.displayTime = formatMMSS(remainingSec(state, Date.now()));
+    syncDbg("PULL", "applyTimerSyncSlice:tick위치만적용", {
+      heartbeatAt: cloudHb,
+    });
     return true;
   }
 
@@ -858,7 +1093,6 @@
     var out = {};
     var keys = [
       "presetId",
-      "activePresetId",
       "timer",
       "timerStatus",
       "displayTime",
@@ -868,6 +1102,9 @@
       "regCloseAt",
       "totalScheduleCommittedSec",
       "timerUpdatedAt",
+      "controlUpdatedAt",
+      "heartbeatAt",
+      "lastActionTimestamp",
       "updatedAt",
     ];
     for (var i = 0; i < keys.length; i++) {
@@ -900,15 +1137,37 @@
         syncPresetId ||
         (state.activePresetId != null ? String(state.activePresetId) : "");
       if (pushPresetId) {
-        var cloudSlice = options.cloudHeartbeat
-          ? pickTimerHeartbeatSlice(state, pushPresetId)
-          : pickTimerSyncSlice(state, pushPresetId);
+        var cloudSlice =
+          options.cloudHeartbeat || options.autoTick
+            ? pickTimerHeartbeatSlice(state, pushPresetId)
+            : pickTimerSyncSlice(state, pushPresetId);
+        syncDbg("PUSH", "writeSyncState:클라우드푸시호출", {
+          pushPresetId: pushPresetId,
+          userAction: isUserSyncAction(options),
+          autoTick: !!options.autoTick,
+          bumpStats: !!options.bumpStats,
+          cloudHeartbeat: !!options.cloudHeartbeat,
+          urgentCloudPush: !!options.urgentCloudPush,
+          skipCloudPush: !!options.skipCloudPush,
+          slice: statsSnippet(cloudSlice),
+        });
         global.MetisSheetSync.saveTimerStateToCloud(
           pushPresetId,
           cloudSlice,
           { urgent: !!options.urgentCloudPush }
         );
+      } else {
+        syncDbg("PUSH", "writeSyncState:pushPresetId없음", {
+          syncPresetId: syncPresetId,
+          activePresetId: state.activePresetId,
+        });
       }
+    } else {
+      syncDbg("PUSH", "writeSyncState:클라우드푸시스킵", {
+        skipCloudPush: !!options.skipCloudPush,
+        hasMetisSheetSync: !!global.MetisSheetSync,
+        stats: statsSnippet(state),
+      });
     }
   }
 
@@ -1371,7 +1630,7 @@
       bridgeCompleted = t.bridge.kind;
       t.bridge = null;
       applyResume(s, now);
-      writeSyncState(s, { skipPresetEmbed: true, urgentCloudPush: true });
+      writeSyncState(s, { skipPresetEmbed: true, autoTick: true });
       return {
         state: s,
         advanced: false,
@@ -1385,9 +1644,9 @@
 
     var res = tickExpire(s, now, canOwn);
     if (res.advanced) {
-      writeSyncState(res.state, { skipPresetEmbed: true, urgentCloudPush: !!res.advanced });
+      writeSyncState(res.state, { skipPresetEmbed: true, autoTick: true });
     } else if (canOwn && totalSecAfter !== totalSecBefore) {
-      writeSyncState(res.state, { skipPresetEmbed: true, urgentCloudPush: !!res.advanced });
+      writeSyncState(res.state, { skipPresetEmbed: true, autoTick: true });
     }
     var live = res.state;
     if (
@@ -1457,11 +1716,16 @@
     timerGameplayRank: timerGameplayRank,
     sliceTimerUpdatedAt: sliceTimerUpdatedAt,
     sliceStatsUpdatedAt: sliceStatsUpdatedAt,
+    sliceControlUpdatedAt: sliceControlUpdatedAt,
+    sliceLastActionAt: sliceLastActionAt,
+    shouldForceApplyCloudControl: shouldForceApplyCloudControl,
+    isEffectivelyPlayingSlice: isEffectivelyPlayingSlice,
     isEffectivelyRunningTimer: isEffectivelyRunningTimer,
     reconcileRunningEndAt: reconcileRunningEndAt,
     syncAllPresetsMetadataFromStorage: syncAllPresetsMetadataFromStorage,
     recoverPresetsMetadataFromTimerStates: recoverPresetsMetadataFromTimerStates,
     mergePresetLists: mergePresetLists,
+    mergePresetRecord: mergePresetRecord,
     isPresetMetadataEmpty: isPresetMetadataEmpty,
     flushActivePresetMetadataToTimer: flushActivePresetMetadataToTimer,
     applyActivePresetMetadataOnSwitch: applyActivePresetMetadataOnSwitch,

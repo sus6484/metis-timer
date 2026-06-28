@@ -1859,7 +1859,11 @@
             } catch (e) {}
             MetisTimer.applyStartOrResume(s, Date.now());
           }
-          MetisTimer.writeSyncState(s, { skipPresetEmbed: true });
+          MetisTimer.writeSyncState(s, {
+            skipPresetEmbed: true,
+            userAction: true,
+            urgentCloudPush: true,
+          });
           tick();
         }
 
@@ -1946,10 +1950,24 @@
         function mutateSync(mutator, options) {
           options = options || {};
           var s = MetisTimer.readSyncState();
-          if (!s) return;
+          if (!s) {
+            console.log("[MetisSync|PUSH|mutateSync:state없음] (timer.html)");
+            return;
+          }
+          var before = {
+            player: s.player,
+            entry: s.entry,
+            statsUpdatedAt: s.statsUpdatedAt,
+          };
           mutator(s, Date.now());
+          console.log("[MetisSync|PUSH|mutateSync:변경] (timer.html)", {
+            before: before,
+            after: { player: s.player, entry: s.entry },
+            options: options,
+          });
           MetisTimer.writeSyncState(s, {
             skipPresetEmbed: true,
+            userAction: true,
             bumpStats: !!options.bumpStats,
             urgentCloudPush: !!options.urgentCloudPush,
           });
@@ -2036,6 +2054,7 @@
         }
 
         function adjustEntry(delta) {
+          console.log("[MetisSync|PUSH|adjustEntry] (timer.html)", { delta: delta });
           mutateSync(function (s) {
             var e = Math.max(0, Math.floor(Number(s.entry) || 0));
             var p = Math.max(0, Math.floor(Number(s.player) || 0));
@@ -2050,6 +2069,7 @@
         }
 
         function adjustPlayer(delta) {
+          console.log("[MetisSync|PUSH|adjustPlayer] (timer.html)", { delta: delta });
           mutateSync(function (s) {
             var e = Math.max(0, Math.floor(Number(s.entry) || 0));
             var p = Math.max(0, Math.floor(Number(s.player) || 0));
@@ -2147,6 +2167,11 @@
                 result && result.applyResult
                   ? result.applyResult
                   : { leveledUp: false, activePresetChanged: false };
+              console.log("[MetisSync|PULL|timer.html:cloudPoll콜백]", {
+                applied: result && result.applied,
+                presetsApplied: result && result.presetsApplied,
+                applyResult: ar,
+              });
               refreshFromBroadcast();
               if (ar.leveledUp) {
                 suppressSkipCreditOnce = true;
