@@ -814,6 +814,8 @@
     var localPlaying = isEffectivelyPlayingSlice(localSlice);
     if (cloudPlaying === localPlaying) return false;
 
+    var cloudAction = sliceLastActionAt(cloudSlice);
+    var localAction = sliceLastActionAt(localSlice);
     var cloudExplicit = Number(cloudSlice.controlUpdatedAt) > 0;
     var localExplicit = Number(localSlice.controlUpdatedAt) > 0;
     var cloudC = sliceControlUpdatedAt(cloudSlice);
@@ -821,12 +823,18 @@
     var cloudTU = sliceTimerUpdatedAt(cloudSlice);
     var localTU = sliceTimerUpdatedAt(localSlice);
 
+    // cloudSlice=정지, localSlice=재생
     if (cloudExplicit && !cloudPlaying && localPlaying) {
+      if (localAction > cloudAction) return false;
+      if (cloudAction > localAction) return true;
       if (cloudTU > localTU) return true;
       if (!localExplicit) return true;
       return cloudC > localC;
     }
+    // cloudSlice=재생, localSlice=정지 (일시정지 후 원격 시작 동기화)
     if (localExplicit && !localPlaying && cloudPlaying) {
+      if (cloudAction > localAction) return true;
+      if (localAction > cloudAction) return false;
       if (cloudTU > localTU) return true;
       if (!cloudExplicit) return false;
       return cloudC > localC;
@@ -1108,14 +1116,6 @@
       return true;
     }
 
-    if (shouldForceApplyCloudControl(localSlice, cloudSlice)) {
-      syncDbg("PULL", "applyTimerSyncSlice:로컬control최신", {
-        cloudLA: cloudLA,
-        localLA: localLA,
-      });
-      return false;
-    }
-
     if (cloudLA > localLA) {
       applyCloudControlSlice(state, cloudSlice);
       syncDbg("PULL", "applyTimerSyncSlice:LWW전체적용", {
@@ -1123,6 +1123,27 @@
         merged: statsSnippet(state),
       });
       return true;
+    }
+
+    if (
+      cloudLA === localLA &&
+      shouldApplyCloudTimerSlice(cloudSlice, localSlice)
+    ) {
+      applyCloudControlSlice(state, cloudSlice);
+      syncDbg("PULL", "applyTimerSyncSlice:동일조작세대_상태적용", {
+        cloudLA: cloudLA,
+        localLA: localLA,
+        merged: statsSnippet(state),
+      });
+      return true;
+    }
+
+    if (shouldForceApplyCloudControl(localSlice, cloudSlice)) {
+      syncDbg("PULL", "applyTimerSyncSlice:로컬control최신", {
+        cloudLA: cloudLA,
+        localLA: localLA,
+      });
+      return false;
     }
 
     if (localLA > cloudLA) {

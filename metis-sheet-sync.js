@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbyBqSCpy5-Xo1-CvIsbzNjJvzaFa3cSDHNTTyjhjPfXp3GrAaEmENwc7yC1ykgz4enPTw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260703",
+    assetVersion: "20260704",
   };
 
   var CLOUD_PULL_RETRY_DELAYS_MS = [0, 600, 1500];
@@ -476,6 +476,15 @@
     var cloudSlice =
       data && data.timerStates && data.timerStates[presetId];
 
+    if (
+      cloudSlice &&
+      global.MetisTimer.isEffectivelyPlayingSlice &&
+      global.MetisTimer.isEffectivelyPlayingSlice(cloudSlice) &&
+      !global.MetisTimer.isEffectivelyPlayingSlice(localSlice)
+    ) {
+      return false;
+    }
+
     if (!cloudSlice || typeof cloudSlice !== "object") {
       return !!(
         localSlice &&
@@ -915,15 +924,12 @@
       return;
     }
     var ar = result.applyResult || emptyApplyResult();
-    var willNotify =
-      result.applied || result.presetsApplied || ar.leveledUp;
-    syncDbg("PULL", "6.cloudPoll:콜백판단", {
-      willNotify: willNotify,
+    syncDbg("PULL", "6.cloudPoll:콜백", {
       applied: result.applied,
       presetsApplied: result.presetsApplied,
       leveledUp: ar.leveledUp,
     });
-    if (willNotify) cloudPollOnApplied(result);
+    cloudPollOnApplied(result);
   }
 
   function scheduleNextCloudPoll(afterMs) {
