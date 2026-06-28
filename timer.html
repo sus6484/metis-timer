@@ -906,6 +906,13 @@
       (function () {
         function runTimerPage() {
         window.__METIS_IS_TIMER_PAGE = true;
+        if (
+          window.MetisTimer &&
+          MetisTimer.setSyncPresetId &&
+          window.__METIS_TIMER_PRESET_ID
+        ) {
+          MetisTimer.setSyncPresetId(String(window.__METIS_TIMER_PRESET_ID));
+        }
 
         function $(id) {
           return document.getElementById(id);

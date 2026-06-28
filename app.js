@@ -173,6 +173,12 @@
       if (embedded[k] === undefined) continue;
       if (
         MetisTimer.isPresetMetadataEmpty &&
+        !MetisTimer.isPresetMetadataEmpty(k, target[k])
+      ) {
+        continue;
+      }
+      if (
+        MetisTimer.isPresetMetadataEmpty &&
         MetisTimer.isPresetMetadataEmpty(k, embedded[k])
       ) {
         continue;
@@ -1173,12 +1179,13 @@
     inputTournamentName.dataset.bound = "1";
     function pushMeta() {
       syncMetaFromInputs();
+      mergeRemoteIntoActivePreset({ skipCloudPush: true });
       pushRemoteLive();
     }
     function flushMeta() {
       syncMetaFromInputs();
-      persistTimerSync();
       flushPresetSnapshot();
+      persistTimerSync({ userAction: true });
     }
     inputTournamentName.addEventListener("input", pushMeta);
     inputTournamentName.addEventListener("change", flushMeta);
@@ -1199,14 +1206,15 @@
         syncMetaFromInputs();
         if (output) output.textContent = input.value + "%";
         input.setAttribute("aria-valuenow", input.value);
+        mergeRemoteIntoActivePreset({ skipCloudPush: true });
         pushRemoteLive();
       }
       function flushFontScale() {
         syncMetaFromInputs();
         if (output) output.textContent = input.value + "%";
         input.setAttribute("aria-valuenow", input.value);
-        persistTimerSync();
         flushPresetSnapshot();
+        persistTimerSync({ userAction: true });
       }
       input.addEventListener("input", pushFontScale);
       input.addEventListener("change", flushFontScale);

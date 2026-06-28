@@ -246,16 +246,7 @@
 
   /** 프리셋 메타데이터만 timer_state_* 에 병합 (인원 등 실시간 값은 유지) */
   function mergeActivePresetMetadataIntoState(state) {
-    var preset = getActivePreset(state);
-    if (!state || !preset) return state;
-    for (var j = 0; j < PRESET_METADATA_ONLY_KEYS.length; j++) {
-      var key = PRESET_METADATA_ONLY_KEYS[j];
-      if (preset[key] === undefined) continue;
-      if (!shouldApplyMetadataField(key, preset[key], state[key])) continue;
-      if (!isPresetMetadataEmpty(key, state[key])) continue;
-      state[key] = copyMetadataValue(key, preset[key]);
-    }
-    return state;
+    return copyPresetMetadataIntoState(state, getActivePreset(state));
   }
 
   /** 클라우드 프리셋 → 로컬 timer_state_* (대회정보·상금 등 정적 메타데이터만) */
