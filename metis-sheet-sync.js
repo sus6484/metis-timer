@@ -6,7 +6,7 @@
   "use strict";
 
   var CONFIG = {
-    url: "https://script.google.com/macros/s/AKfycbyWP672_JV5UTzGmoXsyR9cA77wXWbn-Xd_FkE3gLPMKQdhJMYeZXFdOjaOjpWKzWuaRA/exec",
+    url: "https://script.google.com/macros/s/AKfycbyBqSCpy5-Xo1-CvIsbzNjJvzaFa3cSDHNTTyjhjPfXp3GrAaEmENwc7yC1ykgz4enPTw/exec",
     token: "metis_secret_444444",
     assetVersion: "20260624",
   };
