@@ -1051,7 +1051,8 @@
    * 동일 조작 세대에서는 tick(heartbeat)만 위치 동기화.
    * @returns {boolean} 변경 여부
    */
-  function applyTimerSyncSlice(state, cloudSlice) {
+  function applyTimerSyncSlice(state, cloudSlice, options) {
+    options = options || {};
     if (!state || !cloudSlice || typeof cloudSlice !== "object") {
       syncDbg("PULL", "applyTimerSyncSlice:인자없음");
       return false;
@@ -1076,7 +1077,18 @@
         player: localSlice.player,
         entry: localSlice.entry,
       },
+      forceApply: !!options.forceApply,
     });
+
+    if (options.forceApply) {
+      applyCloudControlSlice(state, cloudSlice);
+      syncDbg("PULL", "applyTimerSyncSlice:강제클라우드적용", {
+        cloudLA: cloudLA,
+        localLA: localLA,
+        merged: statsSnippet(state),
+      });
+      return true;
+    }
 
     if (isBootGraceActive() && isCloudNewerDuringGrace(cloudSlice, localSlice)) {
       applyCloudControlSlice(state, cloudSlice);

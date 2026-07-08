@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbwfALH6tDcW9Q4yQnh-_Re6rgyNAERtndqlVVYkbZYJv1g0PRSUMw939JE5-2wv6o5wsw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260708",
+    assetVersion: "20260708b",
   };
 
   var CLOUD_PULL_RETRY_DELAYS_MS = [0, 600, 1500];
@@ -29,6 +29,7 @@
   var saveTimer = null;
   var pendingSave = null;
   var lastCloudPullData = null;
+  var initialCloudBootstrapDone = false;
 
   var timerSaveTimer = null;
   var pendingTimerSave = null;
@@ -370,6 +371,40 @@
     } catch (e1) {}
   }
 
+  function hasCloudBootstrapData(data, pinnedId) {
+    if (!data || typeof data !== "object") return false;
+    if (Array.isArray(data.presets) && data.presets.length) return true;
+    if (
+      pinnedId &&
+      data.timerStates &&
+      typeof data.timerStates === "object" &&
+      data.timerStates[pinnedId]
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function forceApplyCloudPresets(data) {
+    var result = { applied: false, activePresetChanged: false };
+    if (!data || !Array.isArray(data.presets) || !data.presets.length) return result;
+    var cloudPresets = JSON.parse(JSON.stringify(data.presets));
+    var changed = !presetsJsonEqual(loadLocalPresetsList(), cloudPresets);
+    localStorage.setItem(STORAGE_PRESETS, JSON.stringify(cloudPresets));
+    if (data.presetTimestamps) {
+      savePresetCloudTimestamps(data.presetTimestamps);
+    }
+    adoptCloudUpdatedAt(data.updatedAt);
+    result.applied = changed;
+    if (
+      global.MetisTimer &&
+      global.MetisTimer.syncAllPresetsMetadataFromStorage
+    ) {
+      global.MetisTimer.syncAllPresetsMetadataFromStorage();
+    }
+    return result;
+  }
+
   /** 클라우드 프리셋을 presetId별로 병합 (전체 덮어쓰기·activePresetId 적용 없음) */
   function applyCloudPresetsIfNewer(data, options) {
     options = options || {};
@@ -623,6 +658,9 @@
       lastCloudUpdatedAtLocal: getLastCloudUpdatedAt(),
     });
 
+    var forceBootstrap =
+      !initialCloudBootstrapDone && hasCloudBootstrapData(data, pinnedId);
+
     var applyResult = emptyApplyResult();
     if (data && data.timerStates && pinnedId) {
       syncDbg("PULL", "2.processCloudFetchData:클라우드슬라이스", {
@@ -631,6 +669,7 @@
       });
       applyResult = applyTimerStatesFromCloud(data.timerStates, {
         forcePresetId: pinnedId,
+        forceApply: forceBootstrap,
       });
       syncDbg("PULL", "3.processCloudFetchData:applyTimerStates결과", applyResult);
     } else {
@@ -640,13 +679,18 @@
       });
     }
 
-    var presetResult = applyCloudPresetsIfNewer(data, {});
+    var presetResult = forceBootstrap
+      ? forceApplyCloudPresets(data)
+      : applyCloudPresetsIfNewer(data, {});
     syncDbg("PULL", "4.processCloudFetchData:프리셋적용", {
       presetsApplied: presetResult.applied,
+      forceBootstrap: forceBootstrap,
     });
     syncCloudWatermarkFromPull(data, applyResult);
-    maybePushLocalIfAheadOfCloud(data);
+    if (!forceBootstrap) maybePushLocalIfAheadOfCloud(data);
     applyResult.presetsApplied = presetResult.applied;
+
+    if (forceBootstrap) initialCloudBootstrapDone = true;
 
     if (presetResult.applied) {
       ensureTimerStateBootstrapped();
@@ -788,9 +832,14 @@
     });
 
     var prevLevelIndex = snapshotTimerLevel(localState);
-    if (!global.MetisTimer.applyTimerSyncSlice(localState, cloudSlice)) {
+    if (
+      !global.MetisTimer.applyTimerSyncSlice(localState, cloudSlice, {
+        forceApply: !!options.forceApply,
+      })
+    ) {
       syncDbg("PULL", "applyTimerStatesFromCloud:applyTimerSyncSlice거부", {
         presetId: presetId,
+        forceApply: !!options.forceApply,
       });
       return result;
     }
