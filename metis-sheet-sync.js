@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbwfALH6tDcW9Q4yQnh-_Re6rgyNAERtndqlVVYkbZYJv1g0PRSUMw939JE5-2wv6o5wsw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260704",
+    assetVersion: "20260708",
   };
 
   var CLOUD_PULL_RETRY_DELAYS_MS = [0, 600, 1500];
@@ -280,10 +280,9 @@
       var localT = Number(localTs[pid]) || 0;
       if (cloudT > 0 && cloudT <= localT) continue;
 
-      var mergedP =
-        global.MetisTimer && global.MetisTimer.mergePresetRecord
-          ? global.MetisTimer.mergePresetRecord(localById[pid], cloudP)
-          : cloudP;
+      // presetId별 LWW: cloudT가 localT보다 크면 클라우드 프리셋 전체를 그대로 반영한다.
+      // mergePresetRecord(로컬 비어있지 않은 필드 우선)는 구버전 데이터가 새 클라우드를 덮는 원인이었다.
+      var mergedP = JSON.parse(JSON.stringify(cloudP));
 
       if (outIndex[pid] !== undefined) {
         if (!presetsJsonEqual([out[outIndex[pid]]], [mergedP])) {
@@ -445,21 +444,41 @@
     );
   }
 
-  /** 이 기기가 클라우드보다 앞서 있을 때만 업로드 (역주행 push 차단) */
+  /** 이 기기에서 실제로 더 최신인 프리셋 id만 반환 (전역 타이머 워터마크와 분리) */
+  function getPresetIdsLocallyAheadOfCloud(data) {
+    if (!data) return [];
+    var cloudTs =
+      data.presetTimestamps && typeof data.presetTimestamps === "object"
+        ? data.presetTimestamps
+        : {};
+    var localTs = loadPresetCloudTimestamps();
+    var localList = loadLocalPresetsList();
+    var ids = [];
+    for (var i = 0; i < localList.length; i++) {
+      var p = localList[i];
+      if (!p || !p.id) continue;
+      var pid = String(p.id);
+      var lt = Number(localTs[pid]) || 0;
+      var ct = Number(cloudTs[pid]) || 0;
+      if (lt > ct) ids.push(pid);
+    }
+    return ids;
+  }
+
+  /** 프리셋별 타임스탬프가 로컬에서 더 최신일 때만 업로드 (타이머 워터마크 역주행 push 차단) */
   function maybePushLocalIfAheadOfCloud(data) {
     if (!data) return;
-    var cloudU = Number(data.updatedAt) || 0;
-    var localU = getLastCloudUpdatedAt();
     var cloudAhead = isCloudTimerAheadOfLocal(data);
+    var aheadIds = getPresetIdsLocallyAheadOfCloud(data);
     syncDbg("PULL", "maybePushLocalIfAheadOfCloud", {
-      localU: localU,
-      cloudU: cloudU,
-      localAhead: localU > cloudU,
       cloudTimerAhead: cloudAhead,
-      willPushLocal: localU > cloudU && !cloudAhead,
+      aheadPresetIds: aheadIds,
+      willPushLocal: !cloudAhead && aheadIds.length > 0,
     });
-    if (localU > cloudU && cloudAhead) return;
-    if (localU > cloudU) pushLocalPresetsToCloud();
+    if (cloudAhead || !aheadIds.length) return;
+    savePresetsToCloud(loadLocalPresetsList(), getActivePresetIdFromStorage(), {
+      changedPresetIds: aheadIds,
+    });
   }
 
   /** pull 직후 로컬 타이머가 클라우드보다 앞서 있으면 즉시 push (페이지 열기·포커스용) */

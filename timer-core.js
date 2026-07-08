@@ -232,11 +232,10 @@
 
   function shouldApplyMetadataField(key, presetVal, stateVal) {
     if (key === "prizeItems") {
-      var pLen = Array.isArray(presetVal) ? presetVal.length : 0;
-      var sLen = Array.isArray(stateVal) ? stateVal.length : 0;
-      if (pLen === 0 && sLen > 0) return false;
-      if (pLen > 0 && (sLen === 0 || pLen >= sLen)) return true;
-      return false;
+      if (!Array.isArray(presetVal) || presetVal.length === 0) {
+        return isPresetMetadataEmpty(key, stateVal);
+      }
+      return true;
     }
     if (isPresetMetadataEmpty(key, presetVal)) {
       return isPresetMetadataEmpty(key, stateVal);
