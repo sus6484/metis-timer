@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbwfALH6tDcW9Q4yQnh-_Re6rgyNAERtndqlVVYkbZYJv1g0PRSUMw939JE5-2wv6o5wsw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260719b",
+    assetVersion: "20260719c",
   };
 
   var CLOUD_PULL_RETRY_DELAYS_MS = [0, 600, 1500];
@@ -898,13 +898,23 @@
       return result;
     }
 
-    var cloudSlice = timerStates[presetId];
-    if (!cloudSlice || typeof cloudSlice !== "object") {
+    var cloudSliceRaw = timerStates[presetId];
+    if (!cloudSliceRaw || typeof cloudSliceRaw !== "object") {
       syncDbg("PULL", "applyTimerStatesFromCloud:cloudSlice없음", {
         presetId: presetId,
         availableIds: Object.keys(timerStates),
       });
       return result;
+    }
+
+    // 바인 인원(player/entry)은 Firestore onSnapshot이 담당 — 시트 값으로 덮지 않음
+    var skipSheetBuyIn =
+      global.MetisFirestoreSync && global.MetisFirestoreSync.isBuyInLive;
+    var cloudSlice = Object.assign({}, cloudSliceRaw);
+    if (skipSheetBuyIn) {
+      delete cloudSlice.player;
+      delete cloudSlice.entry;
+      delete cloudSlice.statsUpdatedAt;
     }
 
     global.MetisTimer.setSyncPresetId(presetId);
@@ -921,6 +931,7 @@
       presetId: presetId,
       localSlice: statsSnippet(localSlice),
       cloudSlice: statsSnippet(cloudSlice),
+      skipSheetBuyIn: !!skipSheetBuyIn,
     });
 
     var prevLevelIndex = snapshotTimerLevel(localState);
@@ -938,7 +949,9 @@
 
     var appliedU = global.MetisTimer.timerSyncUpdatedAt(cloudSlice);
     var appliedTU = global.MetisTimer.sliceTimerUpdatedAt(cloudSlice);
-    var appliedSU = global.MetisTimer.sliceStatsUpdatedAt(cloudSlice);
+    var appliedSU = skipSheetBuyIn
+      ? 0
+      : global.MetisTimer.sliceStatsUpdatedAt(cloudSlice);
     var appliedCU =
       global.MetisTimer.sliceControlUpdatedAt &&
       global.MetisTimer.sliceControlUpdatedAt(cloudSlice);
@@ -951,8 +964,10 @@
     if (appliedCU > 0) localState.controlUpdatedAt = appliedCU;
     else if (appliedLA > 0) localState.controlUpdatedAt = appliedLA;
     else if (appliedTU > 0) localState.controlUpdatedAt = appliedTU;
-    if (appliedSU > 0) localState.statsUpdatedAt = appliedSU;
-    else if (appliedU > 0) localState.statsUpdatedAt = appliedU;
+    if (!skipSheetBuyIn) {
+      if (appliedSU > 0) localState.statsUpdatedAt = appliedSU;
+      else if (appliedU > 0) localState.statsUpdatedAt = appliedU;
+    }
 
     global.MetisTimer.writeSyncState(localState, {
       skipCloudPush: true,

@@ -621,6 +621,9 @@
     if (window.MetisSheetSync && MetisSheetSync.updateCloudPollPinnedPreset) {
       MetisSheetSync.updateCloudPollPinnedPreset(id);
     }
+    if (window.MetisFirestoreSync && MetisFirestoreSync.updateBuyInPreset) {
+      MetisFirestoreSync.updateBuyInPreset(id);
+    }
   }
 
   /** 프리셋 전환: 클라우드 타이머 상태 pull 후 리모트·로컬 동기화 */
@@ -941,6 +944,39 @@
   var remoteEngineId = null;
   var lastRemoteSeenUpdated = 0;
   var cloudTimerSyncStarted = false;
+  var firestoreBuyInStarted = false;
+
+  function refreshRemoteFromBuyIn() {
+    MetisTimer.setSyncPresetId(getActivePresetId());
+    var s = MetisTimer.readSyncState();
+    if (!s) return;
+    lastRemoteSeenUpdated = Math.max(
+      lastRemoteSeenUpdated,
+      s.updatedAt || 0,
+      s.statsUpdatedAt || 0
+    );
+    remoteState = getRemote();
+    if (screenRemote.classList.contains("is-active")) renderRemote();
+  }
+
+  function startFirestoreBuyInSyncIfNeeded() {
+    if (!window.MetisFirestoreSync) return;
+    var pid = getActivePresetId();
+    if (!pid) return;
+    firestoreBuyInStarted = true;
+    console.log("[MetisFirestore|PULL|app:startBuyInSync]", { presetId: pid });
+    MetisFirestoreSync.startBuyInSync(pid, function () {
+      refreshRemoteFromBuyIn();
+    });
+  }
+
+  function whenFirebaseReady(cb) {
+    if (window.MetisFirestoreSync) {
+      cb();
+      return;
+    }
+    window.addEventListener("metis-firebase-ready", cb, { once: true });
+  }
 
   function startCloudTimerSyncIfNeeded() {
     if (cloudTimerSyncStarted || !window.MetisSheetSync) return;
@@ -949,6 +985,7 @@
     if (MetisSheetSync.bindCloudSyncBadge) {
       MetisSheetSync.bindCloudSyncBadge("cloud-sync-badge");
     }
+    whenFirebaseReady(startFirestoreBuyInSyncIfNeeded);
     MetisSheetSync.startCloudTimerSync(function (result) {
       var ar =
         result && result.applyResult

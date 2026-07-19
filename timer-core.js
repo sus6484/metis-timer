@@ -1306,36 +1306,64 @@
         bc.postMessage({ type: "sync", t: state.updatedAt });
       } catch (e) {}
     }
-    if (
-      !options.skipCloudPush &&
-      global.MetisSheetSync &&
-      typeof global.MetisSheetSync.saveTimerStateToCloud === "function"
-    ) {
+    if (!options.skipCloudPush) {
       var pushPresetId =
         syncPresetId ||
         (state.activePresetId != null ? String(state.activePresetId) : "");
-      if (pushPresetId) {
-        var cloudSlice =
-          options.cloudHeartbeat || options.autoTick
-            ? pickTimerHeartbeatSlice(state, pushPresetId)
-            : pickTimerSyncSlice(state, pushPresetId);
-        syncDbg("PUSH", "writeSyncState:클라우드푸시호출", {
-          pushPresetId: pushPresetId,
-          userAction: isUserSyncAction(options),
-          autoTick: !!options.autoTick,
-          bumpStats: !!options.bumpStats,
-          cloudHeartbeat: !!options.cloudHeartbeat,
-          urgentCloudPush: !!options.urgentCloudPush,
-          skipCloudPush: !!options.skipCloudPush,
-          slice: statsSnippet(cloudSlice),
+      // 바인 인원(player/entry) → Firestore 실시간 동기화
+      if (
+        options.bumpStats &&
+        pushPresetId &&
+        global.MetisFirestoreSync &&
+        typeof global.MetisFirestoreSync.saveBuyInStats === "function"
+      ) {
+        global.MetisFirestoreSync.saveBuyInStats(pushPresetId, {
+          player: state.player,
+          entry: state.entry,
+          statsUpdatedAt: state.statsUpdatedAt,
         });
-        global.MetisSheetSync.saveTimerStateToCloud(pushPresetId, cloudSlice, {
-          urgent: !!options.urgentCloudPush,
-        });
+      }
+      if (
+        global.MetisSheetSync &&
+        typeof global.MetisSheetSync.saveTimerStateToCloud === "function"
+      ) {
+        if (pushPresetId) {
+          var cloudSlice =
+            options.cloudHeartbeat || options.autoTick
+              ? pickTimerHeartbeatSlice(state, pushPresetId)
+              : pickTimerSyncSlice(state, pushPresetId);
+          // 바인 인원은 Firestore가 담당 — 시트 페이로드에서 제외
+          if (
+            global.MetisFirestoreSync &&
+            global.MetisFirestoreSync.isBuyInLive
+          ) {
+            delete cloudSlice.player;
+            delete cloudSlice.entry;
+            delete cloudSlice.statsUpdatedAt;
+          }
+          syncDbg("PUSH", "writeSyncState:클라우드푸시호출", {
+            pushPresetId: pushPresetId,
+            userAction: isUserSyncAction(options),
+            autoTick: !!options.autoTick,
+            bumpStats: !!options.bumpStats,
+            cloudHeartbeat: !!options.cloudHeartbeat,
+            urgentCloudPush: !!options.urgentCloudPush,
+            skipCloudPush: !!options.skipCloudPush,
+            slice: statsSnippet(cloudSlice),
+          });
+          global.MetisSheetSync.saveTimerStateToCloud(pushPresetId, cloudSlice, {
+            urgent: !!options.urgentCloudPush,
+          });
+        } else {
+          syncDbg("PUSH", "writeSyncState:pushPresetId없음", {
+            syncPresetId: syncPresetId,
+            activePresetId: state.activePresetId,
+          });
+        }
       } else {
-        syncDbg("PUSH", "writeSyncState:pushPresetId없음", {
-          syncPresetId: syncPresetId,
-          activePresetId: state.activePresetId,
+        syncDbg("PUSH", "writeSyncState:시트푸시스킵", {
+          hasMetisSheetSync: !!global.MetisSheetSync,
+          stats: statsSnippet(state),
         });
       }
     } else {

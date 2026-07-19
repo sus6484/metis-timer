@@ -1,0 +1,9 @@
+{
+  "name": "metis-timer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Metis Hold'em Timer",
+  "dependencies": {
+    "firebase": "^12.16.0"
+  }
+}

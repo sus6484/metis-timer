@@ -881,8 +881,10 @@
       </div>
     </div>
 
-    <script>window.__METIS_ASSET_V = "20260719b";</script>
-    <script src="metis-sheet-sync.js?v=20260708b"></script>
+    <script>window.__METIS_ASSET_V = "20260719c";</script>
+    <script type="module" src="firebase.js?v=20260719c"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260719c"></script>
+    <script src="metis-sheet-sync.js?v=20260719c"></script>
     <script>
       (function () {
         MetisSheetSync.bootTimerPage(function () {
@@ -2174,6 +2176,29 @@
           MetisSheetSync.bindCloudSyncBadge("cloud-sync-badge");
         }
 
+        function startFirestoreBuyInOnTimer() {
+          if (!window.MetisFirestoreSync) return;
+          var buyInPid = MetisTimer.getSyncPresetId
+            ? MetisTimer.getSyncPresetId()
+            : window.__METIS_TIMER_PRESET_ID || "";
+          if (!buyInPid) return;
+          console.log("[MetisFirestore|PULL|timer.html:startBuyInSync]", {
+            presetId: buyInPid,
+          });
+          MetisFirestoreSync.startBuyInSync(buyInPid, function () {
+            refreshFromBroadcast();
+            tick();
+          });
+        }
+        if (window.MetisFirestoreSync) startFirestoreBuyInOnTimer();
+        else {
+          window.addEventListener(
+            "metis-firebase-ready",
+            startFirestoreBuyInOnTimer,
+            { once: true }
+          );
+        }
+
         function clearHb() {
           try {
             localStorage.removeItem(MetisTimer.HEARTBEAT_KEY);
@@ -2191,6 +2216,9 @@
           clearLeftCarousel();
           if (window.MetisSheetSync && MetisSheetSync.stopCloudTimerSync) {
             MetisSheetSync.stopCloudTimerSync();
+          }
+          if (window.MetisFirestoreSync && MetisFirestoreSync.stopBuyInSync) {
+            MetisFirestoreSync.stopBuyInSync();
           }
         });
 
