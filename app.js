@@ -724,7 +724,7 @@
     }
   }
 
-  /** 프리셋 전환: 클라우드 타이머 상태 pull 후 리모트·로컬 동기화 */
+  /** 프리셋 전환: Firestore 타이머 상태 유지하며 리모트·로컬 메타만 맞춤 */
   function activatePreset(id) {
     mergeRemoteIntoActivePreset();
     var prevId = getActivePresetId();
@@ -750,7 +750,6 @@
       MetisTimer.applyActivePresetMetadataOnSwitch(id);
     }
     remoteState = getRemote();
-    mirrorLocalSync();
     renderRemote();
     return Promise.resolve();
   }
@@ -847,10 +846,35 @@
         Math.floor(prev.totalScheduleCommittedSec)
       );
     }
-    var t = prev && prev.timer ? prev.timer : MetisTimer.defaultTimer();
-    base.timer = MetisTimer.normalizeTimer(t, base);
+    // Firestore/엔진이 쓴 타이머 제어는 remoteState 기본값(대기중)으로 덮지 않음
+    if (prev) {
+      base.timer = MetisTimer.normalizeTimer(
+        prev.timer || MetisTimer.defaultTimer(),
+        base
+      );
+      if (prev.timerStatus != null) base.timerStatus = prev.timerStatus;
+      if (prev.displayTime != null) base.displayTime = prev.displayTime;
+      if (prev.level != null) base.level = prev.level;
+      if (prev.hasStartedOnce != null) base.hasStartedOnce = !!prev.hasStartedOnce;
+      if (prev.pendingBridge !== undefined) base.pendingBridge = prev.pendingBridge;
+      if (prev.regCloseAt !== undefined) base.regCloseAt = prev.regCloseAt;
+      if (prev.lastActionTimestamp != null) {
+        base.lastActionTimestamp = prev.lastActionTimestamp;
+      }
+      if (prev.controlUpdatedAt != null) {
+        base.controlUpdatedAt = prev.controlUpdatedAt;
+      }
+      if (prev.timerUpdatedAt != null) base.timerUpdatedAt = prev.timerUpdatedAt;
+      if (prev.heartbeatAt != null) base.heartbeatAt = prev.heartbeatAt;
+      if (prev.updatedAt != null) base.updatedAt = prev.updatedAt;
+    } else {
+      base.timer = MetisTimer.normalizeTimer(
+        MetisTimer.defaultTimer(),
+        base
+      );
+      base.regCloseAt = null;
+    }
     MetisTimer.syncLevelField(base);
-    base.regCloseAt = null;
     return base;
   }
 
@@ -899,9 +923,7 @@
     persistTimerSync();
   }
 
-  /** 클라우드 push 없이 로컬 저장소만 맞춤 (앱 시작·클라우드 pull 직후)
-   *  주의: remoteState 메타로 프리셋을 덮지 않음 — 프리셋(Firestore)이 SSOT
-   */
+  /** 클라우드 push 없이 로컬 저장소만 맞춤 (메타·바인만). 타이머 제어는 Firestore SSOT 유지 */
   function mirrorLocalSync() {
     syncRemoteStateMetaFromActivePreset();
     clampPlayerEntry(remoteState);
@@ -909,7 +931,10 @@
     MetisTimer.writeSyncState(buildFullSync(true), {
       skipPresetEmbed: true,
       skipCloudPush: true,
+      preserveUpdatedAt: true,
     });
+    // 디스크에 반영된 타이머 상태로 remote UI 메모리도 맞춤
+    remoteState = getRemote();
   }
 
   function pushRemoteLive() {
@@ -1115,6 +1140,12 @@
     if (cloudTimerSyncStarted) return;
     cloudTimerSyncStarted = true;
     console.log("[MetisFirestore|PULL|app:startLiveSyncIfNeeded] (index.html)");
+    if (
+      window.MetisFirestoreSync &&
+      MetisFirestoreSync.bindCloudSyncBadge
+    ) {
+      MetisFirestoreSync.bindCloudSyncBadge("cloud-sync-badge");
+    }
     whenFirebaseReady(startFirestoreBuyInSyncIfNeeded);
   }
 
@@ -1169,7 +1200,7 @@
       showScreen("remote");
       renderRemote();
       renderPresets();
-      mirrorLocalSync();
+      // 로그인 직후 Firestore 상태를 대기중으로 덮지 않음
       syncLastSeenFromStore();
       startCloudTimerSyncIfNeeded();
     } else {
@@ -2502,7 +2533,7 @@
       showScreen("remote");
       renderRemote();
       renderPresets();
-      mirrorLocalSync();
+      // Firestore live sync가 타이머 SSOT — 부팅 시 로컬 대기중으로 덮어쓰지 않음
       syncLastSeenFromStore();
     } else {
       showScreen("auth");

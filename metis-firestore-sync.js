@@ -285,6 +285,7 @@ function applyBuyInToLocal(presetId, raw) {
 }
 
 function notifyTimerControlUi(detail) {
+  setCloudSyncBadgeState("synced", "동기화됨");
   try {
     window.dispatchEvent(
       new CustomEvent("metis-timer-control-applied", {
@@ -297,6 +298,40 @@ function notifyTimerControlUi(detail) {
     typeof MetisTimer.notifyLocalSyncListeners === "function"
   ) {
     MetisTimer.notifyLocalSyncListeners();
+  }
+}
+
+var cloudSyncBadgeId = "";
+var cloudSyncBadgeUnsub = null;
+
+function setCloudSyncBadgeState(state, label) {
+  var id = cloudSyncBadgeId || "cloud-sync-badge";
+  var el =
+    typeof document !== "undefined" ? document.getElementById(id) : null;
+  if (!el) return;
+  el.setAttribute("data-state", state || "idle");
+  var lab = el.querySelector(".cloud-sync-label");
+  if (lab) lab.textContent = label || "";
+}
+
+function bindCloudSyncBadge(elementId) {
+  cloudSyncBadgeId = elementId || "cloud-sync-badge";
+  setCloudSyncBadgeState("syncing", "동기화 중");
+  if (cloudSyncBadgeUnsub) return;
+  cloudSyncBadgeUnsub = true;
+  window.addEventListener("metis-timer-control-applied", function () {
+    setCloudSyncBadgeState("synced", "동기화됨");
+  });
+  window.addEventListener("metis-firebase-ready", function () {
+    setCloudSyncBadgeState("syncing", "동기화 중");
+  });
+  if (typeof navigator !== "undefined") {
+    window.addEventListener("offline", function () {
+      setCloudSyncBadgeState("offline", "오프라인");
+    });
+    window.addEventListener("online", function () {
+      setCloudSyncBadgeState("syncing", "동기화 중");
+    });
   }
 }
 
@@ -446,6 +481,7 @@ function startTimerControlSync(presetId, onApplied) {
   stopTimerControlSync();
   controlPresetId = pid;
   controlOnApplied = typeof onApplied === "function" ? onApplied : null;
+  setCloudSyncBadgeState("syncing", "동기화 중");
 
   console.log("[MetisFirestore|PULL|startTimerControlSync]", { presetId: pid });
   controlUnsub = onSnapshot(
@@ -455,15 +491,20 @@ function startTimerControlSync(presetId, onApplied) {
         console.log("[MetisFirestore|PULL|timerControl:문서없음]", {
           presetId: pid,
         });
+        setCloudSyncBadgeState("synced", "동기화됨");
         return;
       }
       var result = applyTimerControlToLocal(pid, snap.data());
       if (result && result.changed && typeof controlOnApplied === "function") {
         controlOnApplied(result);
+      } else if (!result) {
+        // 변경 없어도 연결은 성공 — 대기 배지 해제
+        setCloudSyncBadgeState("synced", "동기화됨");
       }
     },
     function (err) {
       console.warn("[MetisFirestore] timerControl onSnapshot 오류:", err);
+      setCloudSyncBadgeState("offline", "오류");
     }
   );
 }
@@ -1224,6 +1265,8 @@ window.MetisFirestoreSync = {
   resolveBootPresetId: resolveBootPresetId,
   ensureTimerStateBootstrapped: ensureTimerStateBootstrapped,
   bootTimerPage: bootTimerPage,
+  bindCloudSyncBadge: bindCloudSyncBadge,
+  setCloudSyncBadgeState: setCloudSyncBadgeState,
 };
 
 window.dispatchEvent(new Event("metis-firebase-ready"));

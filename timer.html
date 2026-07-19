@@ -881,9 +881,9 @@
       </div>
     </div>
 
-    <script>window.__METIS_ASSET_V = "20260719j";</script>
-    <script type="module" src="firebase.js?v=20260719j"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260719j"></script>
+    <script>window.__METIS_ASSET_V = "20260719k";</script>
+    <script type="module" src="firebase.js?v=20260719k"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260719k"></script>
     <script>
       (function () {
         function startBoot() {
@@ -1818,6 +1818,8 @@
 
         // Firestore applyTimerControl 직후 UI 강제 갱신
         window.addEventListener("metis-timer-control-applied", function (ev) {
+          lastUi = {};
+          lastPausedOverlay = null;
           refreshFromBroadcast();
           var detail = ev && ev.detail ? ev.detail : null;
           if (detail && detail.leveledUp) {
@@ -2168,6 +2170,13 @@
         MetisTimer.subscribeSync(refreshFromBroadcast);
         window.addEventListener("storage", refreshFromBroadcast);
         window.addEventListener("metis-presets-bootstrapped", refreshFromBroadcast);
+
+        if (
+          window.MetisFirestoreSync &&
+          MetisFirestoreSync.bindCloudSyncBadge
+        ) {
+          MetisFirestoreSync.bindCloudSyncBadge("cloud-sync-badge");
+        }
 
         function startFirestoreBuyInOnTimer() {
           if (!window.MetisFirestoreSync) return;
