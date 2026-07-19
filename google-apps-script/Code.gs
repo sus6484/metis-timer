@@ -12,6 +12,7 @@
  *   A3: updatedAt (숫자, 전역 워터마크)
  *   A4: timerStates JSON — 프리셋 id → 실시간 타이머 상태
  *   A5: presetRecords JSON — 프리셋 id → { data, updatedAt } (프리셋별 독립 LWW)
+ *   A6: deletedPresetIds JSON — 프리셋 id → deletedAt (삭제 톰스톤, 부활 방지)
  */
 
 var TOKEN = "metis_secret_444444";
@@ -35,40 +36,14 @@ function doPost(e) {
   }
 
   var store = readStore_();
+  if (!store.deletedPresetIds) store.deletedPresetIds = {};
 
-  // 프리셋 배열 — presetId별로 독립 병합 (전체 덮어쓰기 금지)
-  if (Array.isArray(body.presets) && body.presets.length) {
-    store.presetRecords = mergePresetRecords_(
-      store.presetRecords || {},
-      body.presets,
-      body.presetTimestamps || null,
-      body.updatedAt
-    );
-    store.presets = presetRecordsToArray_(store.presetRecords);
-  }
-
-  // 단일 프리셋 빠른 업데이트
-  if (body.preset && body.presetId) {
-    var singlePid = String(body.presetId);
-    var singleTs =
-      body.presetTimestamps && body.presetTimestamps[singlePid]
-        ? Number(body.presetTimestamps[singlePid])
-        : body.updatedAt || Date.now();
-    store.presetRecords = mergePresetRecords_(
-      store.presetRecords || {},
-      [body.preset],
-      (function () {
-        var m = {};
-        m[singlePid] = singleTs;
-        return m;
-      })(),
-      singleTs
-    );
-    store.presets = presetRecordsToArray_(store.presetRecords);
-  }
-
-  // 프리셋 삭제
+  // 삭제를 먼저 반영 — 같은 요청/이후 push에서 부활하지 않게
   if (Array.isArray(body.deletedPresetIds) && body.deletedPresetIds.length) {
+    store.deletedPresetIds = markDeletedPresetIds_(
+      store.deletedPresetIds,
+      body.deletedPresetIds
+    );
     store.presetRecords = deletePresetRecords_(
       store.presetRecords || {},
       body.deletedPresetIds
@@ -82,6 +57,40 @@ function doPost(e) {
     }
   }
 
+  // 프리셋 배열 — presetId별로 독립 병합 (삭제 톰스톤 제외)
+  if (Array.isArray(body.presets) && body.presets.length) {
+    var filteredPresets = filterDeletedPresets_(body.presets, store.deletedPresetIds);
+    store.presetRecords = mergePresetRecords_(
+      store.presetRecords || {},
+      filteredPresets,
+      body.presetTimestamps || null,
+      body.updatedAt
+    );
+    store.presets = presetRecordsToArray_(store.presetRecords);
+  }
+
+  // 단일 프리셋 빠른 업데이트
+  if (body.preset && body.presetId) {
+    var singlePid = String(body.presetId);
+    if (!store.deletedPresetIds[singlePid]) {
+      var singleTs =
+        body.presetTimestamps && body.presetTimestamps[singlePid]
+          ? Number(body.presetTimestamps[singlePid])
+          : body.updatedAt || Date.now();
+      store.presetRecords = mergePresetRecords_(
+        store.presetRecords || {},
+        [body.preset],
+        (function () {
+          var m = {};
+          m[singlePid] = singleTs;
+          return m;
+        })(),
+        singleTs
+      );
+      store.presets = presetRecordsToArray_(store.presetRecords);
+    }
+  }
+
   // activePresetId는 클라우드에 저장하지 않음 (기기별 UI 상태)
 
   if (body.timerStates && typeof body.timerStates === "object") {
@@ -90,9 +99,11 @@ function doPost(e) {
 
   if (body.timerState && body.presetId) {
     var pid = String(body.presetId);
-    if (!store.timerStates) store.timerStates = {};
-    var mergedOne = mergeOneTimerState_(store.timerStates[pid], body.timerState);
-    if (mergedOne) store.timerStates[pid] = mergedOne;
+    if (!store.deletedPresetIds[pid]) {
+      if (!store.timerStates) store.timerStates = {};
+      var mergedOne = mergeOneTimerState_(store.timerStates[pid], body.timerState);
+      if (mergedOne) store.timerStates[pid] = mergedOne;
+    }
   }
 
   store.updatedAt = Date.now();
@@ -104,9 +115,12 @@ function doPost(e) {
 }
 
 function buildClientPayload_(store) {
+  var deleted = store.deletedPresetIds || {};
+  var presets = filterDeletedPresets_(store.presets || [], deleted);
   return {
-    presets: store.presets || [],
+    presets: presets,
     presetTimestamps: presetTimestampsMap_(store.presetRecords || {}),
+    deletedPresetIds: Object.keys(deleted),
     updatedAt: store.updatedAt || 0,
     timerStates: store.timerStates || {},
   };
@@ -127,6 +141,30 @@ function presetRecordsToArray_(records) {
     );
   });
   return out;
+}
+
+function filterDeletedPresets_(presets, deletedMap) {
+  presets = presets || [];
+  deletedMap = deletedMap || {};
+  var out = [];
+  for (var i = 0; i < presets.length; i++) {
+    var p = presets[i];
+    if (!p || !p.id) continue;
+    if (deletedMap[String(p.id)]) continue;
+    out.push(p);
+  }
+  return out;
+}
+
+function markDeletedPresetIds_(existing, deletedIds) {
+  existing = existing || {};
+  var now = Date.now();
+  for (var i = 0; i < deletedIds.length; i++) {
+    var pid = String(deletedIds[i] || "");
+    if (!pid) continue;
+    existing[pid] = now;
+  }
+  return existing;
 }
 
 function presetTimestampsMap_(records) {
@@ -359,6 +397,7 @@ function readStore_() {
   var updatedAt = 0;
   var timerStates = {};
   var presetRecords = {};
+  var deletedPresetIds = {};
 
   try {
     var presetsRaw = sh.getRange("A1").getValue();
@@ -398,12 +437,33 @@ function readStore_() {
     presetRecords = {};
   }
 
+  try {
+    var deletedRaw = sh.getRange("A6").getValue();
+    if (deletedRaw) {
+      var delParsed = JSON.parse(String(deletedRaw));
+      if (delParsed && typeof delParsed === "object" && !Array.isArray(delParsed)) {
+        deletedPresetIds = delParsed;
+      }
+    }
+  } catch (e6) {
+    deletedPresetIds = {};
+  }
+
   presetRecords = migrateLegacyPresetsToRecords_(presets, presetRecords);
-  presets = presetRecordsToArray_(presetRecords);
+  // 톰스톤에 있는 레코드는 저장소에서도 제거
+  var delKeys = Object.keys(deletedPresetIds);
+  if (delKeys.length) {
+    presetRecords = deletePresetRecords_(presetRecords, delKeys);
+  }
+  presets = filterDeletedPresets_(
+    presetRecordsToArray_(presetRecords),
+    deletedPresetIds
+  );
 
   return {
     presets: presets,
     presetRecords: presetRecords,
+    deletedPresetIds: deletedPresetIds,
     updatedAt: updatedAt,
     timerStates: timerStates,
   };
@@ -416,6 +476,7 @@ function writeStore_(store) {
   sh.getRange("A3").setValue(store.updatedAt || Date.now());
   sh.getRange("A4").setValue(JSON.stringify(store.timerStates || {}));
   sh.getRange("A5").setValue(JSON.stringify(store.presetRecords || {}));
+  sh.getRange("A6").setValue(JSON.stringify(store.deletedPresetIds || {}));
 }
 
 function getSheet_() {

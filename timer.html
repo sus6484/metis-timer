@@ -46,7 +46,7 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding: max(12px, env(safe-area-inset-top, 0px)) max(4px, env(safe-area-inset-right, 0px))
+        padding: max(6px, env(safe-area-inset-top, 0px)) max(4px, env(safe-area-inset-right, 0px))
           max(20px, env(safe-area-inset-bottom, 0px)) max(2px, env(safe-area-inset-left, 0px));
         position: relative;
         overflow-x: hidden;
@@ -68,8 +68,8 @@
       .timer-page-header {
         width: 100%;
         max-width: min(99vw, var(--timer-layout-max));
-        margin: 0 auto 10px;
-        padding: 0 8px 4px;
+        margin: 0 auto 2px;
+        padding: 0 8px 0;
         text-align: center;
         flex-shrink: 0;
       }
@@ -87,11 +87,11 @@
         overflow-wrap: anywhere;
       }
       .timer-header-logo {
-        width: min(120px, 26vw);
+        width: min(72px, 16vw);
         max-width: 100%;
         height: auto;
         display: block;
-        margin: 6px auto 14px;
+        margin: clamp(10px, 1.6vh, 18px) auto 4px;
         opacity: 0.82;
       }
       .outer-layout {
@@ -261,12 +261,12 @@
         display: flex;
         flex-direction: column;
         align-items: stretch;
-        justify-content: center;
+        justify-content: flex-start;
         cursor: pointer;
         border-radius: 12px;
         outline: none;
         transition: background 0.15s;
-        padding: 8px 0;
+        padding: 0;
       }
       .tap-root:hover {
         background: rgba(255, 45, 165, 0.04);
@@ -291,7 +291,8 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        justify-content: center;
+        justify-content: flex-start;
+        padding-top: clamp(4px, 1vh, 12px);
         text-align: center;
       }
       .normal-stage-main {
@@ -362,8 +363,8 @@
           overflow-y: auto;
         }
         .timer-page-header {
-          margin-bottom: 6px;
-          padding: 0 4px 2px;
+          margin-bottom: 2px;
+          padding: 0 4px 0;
         }
         .timer-tournament-title {
           font-size: clamp(1rem, 6vw, 1.45rem);
@@ -392,20 +393,16 @@
           padding: 4px 2px 0;
         }
         .timer-header-logo {
-          width: min(54px, 18vw);
-          margin: 0 auto 6px;
-        }
-        .status-pill {
-          font-size: 0.68rem;
-          margin-bottom: 2px;
+          width: min(44px, 14vw);
+          margin: 6px auto 2px;
         }
         .level {
           font-size: clamp(0.9rem, 4.5vw, 1.2rem);
-          margin-bottom: 8px;
+          margin: 14px 0 8px;
           letter-spacing: 0.04em;
         }
         .clock {
-          font-size: clamp(2.5rem, 16vw, 4.2rem);
+          font-size: clamp(3.4rem, 20vw, 5.6rem);
           margin-bottom: 8px;
         }
         .blinds {
@@ -417,7 +414,7 @@
           display: block;
           margin-right: 0;
           margin-bottom: 2px;
-          font-size: 0.64rem;
+          font-size: inherit;
           letter-spacing: 0.05em;
         }
         .next-level {
@@ -500,30 +497,22 @@
         letter-spacing: 0.04em;
         text-align: center;
       }
-      .status-pill {
-        width: 100%;
-        margin-inline: 0;
-        text-align: center;
-        font-size: 0.92rem;
-        color: var(--muted);
-        margin-bottom: 8px;
-        letter-spacing: 0.06em;
-      }
       .level {
         width: 100%;
+        margin: clamp(20px, 2.8vh, 28px) 0 clamp(8px, 1.2vh, 12px);
         margin-inline: 0;
         text-align: center;
         color: var(--pink);
         font-size: clamp(1.45rem, 3.7vw, 2.2rem);
         font-weight: 800;
         letter-spacing: 0.12em;
-        margin-bottom: 20px;
+        line-height: 1.1;
       }
       .clock {
-        font-size: clamp(6.25rem, min(28vw, 26vmin), 15.5rem);
+        font-size: clamp(8.5rem, min(38vw, 36vmin), 21rem);
         font-weight: 800;
         font-variant-numeric: tabular-nums;
-        margin-bottom: 28px;
+        margin: 0 0 22px;
         line-height: 1;
         text-align: center;
       }
@@ -537,7 +526,7 @@
       }
       .blinds span.lab {
         color: var(--pink);
-        font-size: clamp(1.05rem, 2.2vw, 1.45rem);
+        font-size: inherit;
         letter-spacing: 0.1em;
         margin-right: 8px;
       }
@@ -814,7 +803,6 @@
             </div>
             <div id="normal-stage-main" class="normal-stage-main">
               <img class="timer-header-logo" src="image/logo.png" alt="Metis logo" />
-              <p class="status-pill" id="el-status">대기중</p>
               <p class="level" id="el-level">LEVEL —</p>
               <div class="clock" id="el-clock">00:00</div>
               <div class="blinds" id="el-blinds"></div>
@@ -857,7 +845,7 @@
     <div id="quick-zone" class="quick-zone" aria-hidden="true"></div>
     <div id="quick-panel" class="quick-panel" aria-label="퀵 컨트롤 패널">
       <div class="quick-panel-group">
-        <span class="quick-panel-label">VOL</span>
+        <span class="quick-panel-label" id="quick-vol-label">VOL (100%)</span>
         <button type="button" class="quick-btn" data-quick="vol-minus">−</button>
         <button type="button" class="quick-btn" data-quick="vol-plus">+</button>
       </div>
@@ -893,7 +881,7 @@
       </div>
     </div>
 
-    <script>window.__METIS_ASSET_V = "20260708b";</script>
+    <script>window.__METIS_ASSET_V = "20260719b";</script>
     <script src="metis-sheet-sync.js?v=20260708b"></script>
     <script>
       (function () {
@@ -1326,11 +1314,28 @@
         }
 
         function getActivePresetFromState(s) {
-          if (!s || !s.presets || !s.activePresetId) return null;
+          if (!s || !s.presets) return null;
+          if (MetisTimer.getActivePreset) return MetisTimer.getActivePreset(s);
+          var aid =
+            (MetisTimer.getSyncPresetId && MetisTimer.getSyncPresetId()) ||
+            s.activePresetId;
+          if (!aid) return null;
+          var sid = String(aid);
           for (var i = 0; i < s.presets.length; i++) {
-            if (s.presets[i].id === s.activePresetId) return s.presets[i];
+            if (s.presets[i] && String(s.presets[i].id) === sid) return s.presets[i];
           }
           return null;
+        }
+
+        function resolveEntryChipsForState(s) {
+          if (MetisTimer.resolveActiveEntryChips) {
+            return MetisTimer.resolveActiveEntryChips(s);
+          }
+          var preset = getActivePresetFromState(s);
+          if (preset && preset.entryChips !== undefined) {
+            return Math.max(0, Math.floor(Number(preset.entryChips) || 0));
+          }
+          return Math.max(0, Math.floor(Number(s && s.entryChips) || 0));
         }
 
         /** 플레이 레벨 번호(브레이크 제외 N번째)에 해당하는 스케줄 행 인덱스 */
@@ -1533,15 +1538,6 @@
             !!(tn.bridge && tn.bridge.kind === "preWait") ||
             !!(s.pendingBridge && s.pendingBridge.kind === "preWait");
 
-          var statusEl = $("el-status");
-          if (statusEl && lastUi["el-status:hidden"] !== inPreWait) {
-            lastUi["el-status:hidden"] = inPreWait;
-            statusEl.hidden = inPreWait;
-          }
-          if (!inPreWait) {
-            textIf("el-status", s.timerStatus || "대기중");
-          }
-
           var paused = (s.timerStatus || "") === "일시정지";
           var ov = $("pause-overlay");
           if (ov && lastPausedOverlay !== paused) {
@@ -1690,8 +1686,7 @@
             applyRegCloseDisplay($("el-m-regclose"), s, levels, idxSchedule, rem, tNow, false);
           }
           var totalStack =
-            Math.max(0, Math.floor(Number(en) || 0)) *
-            Math.max(0, Math.floor(Number(s.entryChips) || 0));
+            Math.max(0, Math.floor(Number(en) || 0)) * resolveEntryChipsForState(s);
           textIf("el-m-total", totalStack.toLocaleString("ko-KR"));
           var avgStack = pl > 0 ? Math.floor(totalStack / pl) : 0;
           htmlIf("el-m-avg", formatAvgBbText(avgStack, L));
@@ -1878,6 +1873,16 @@
           quickPanel.classList.toggle("is-visible", quickHoverBottom || quickHoverPanel);
         }
 
+        function volumeToPercent(v) {
+          return Math.round(normalizeQuickVolume(v) * 100);
+        }
+
+        function updateVolLabel(v) {
+          var label = $("quick-vol-label");
+          if (!label) return;
+          label.textContent = "VOL (" + volumeToPercent(v) + "%)";
+        }
+
         function setQuickMasterVolume(v) {
           var val = normalizeQuickVolume(v);
           if (typeof MetisAudio !== "undefined" && MetisAudio.setMasterVolume) {
@@ -1888,6 +1893,7 @@
           } catch (e) {}
           var bv = $("break-video");
           if (bv) applyBreakVideoAudio(bv);
+          updateVolLabel(val);
         }
 
         function getQuickMasterVolume() {
@@ -1895,6 +1901,17 @@
             return MetisAudio.getMasterVolume();
           }
           return 1;
+        }
+
+        function adjustQuickMasterVolume(delta) {
+          var pct = volumeToPercent(getQuickMasterVolume());
+          var step = Math.round(delta * 100);
+          if (pct % 10 !== 0) {
+            pct = delta > 0 ? Math.ceil(pct / 10) * 10 : Math.floor(pct / 10) * 10;
+          } else {
+            pct += step;
+          }
+          setQuickMasterVolume(pct / 100);
         }
 
         function loadQuickVolume() {
@@ -2022,6 +2039,8 @@
         function adjustEntry(delta) {
           console.log("[MetisSync|PUSH|adjustEntry] (timer.html)", { delta: delta });
           mutateSync(function (s) {
+            // 활성 프리셋 ID의 바인칩만 사용 (다른 프리셋 값 잔존 방지)
+            s.entryChips = resolveEntryChipsForState(s);
             var e = Math.max(0, Math.floor(Number(s.entry) || 0));
             var p = Math.max(0, Math.floor(Number(s.player) || 0));
             if (delta > 0) {
@@ -2050,8 +2069,8 @@
             if (MetisAudio.resumeCtx) MetisAudio.resumeCtx();
           }
           quickFeedback();
-          if (action === "vol-plus") return setQuickMasterVolume(getQuickMasterVolume() + 0.1);
-          if (action === "vol-minus") return setQuickMasterVolume(getQuickMasterVolume() - 0.1);
+          if (action === "vol-plus") return adjustQuickMasterVolume(0.1);
+          if (action === "vol-minus") return adjustQuickMasterVolume(-0.1);
           if (action === "entry-plus") return adjustEntry(1);
           if (action === "entry-minus") return adjustEntry(-1);
           if (action === "player-plus") return adjustPlayer(1);

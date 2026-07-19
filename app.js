@@ -98,7 +98,7 @@
     var embedded = {};
     var po = null;
     for (var j = 0; j < presets.length; j++) {
-      if (presets[j].id === aid) {
+      if (presets[j] && String(presets[j].id) === String(aid)) {
         po = presets[j];
         break;
       }
@@ -109,11 +109,14 @@
     if (s) {
       r = Object.assign({}, defaultRemote(), embedded, MetisTimer.pickRemoteSlice(s));
       applyPresetMetadataOverSync(r, embedded);
+      // 바인칩·레지마감은 활성 프리셋 ID 기준 — 다른 프리셋 timer_state 값이 덮지 못함
+      applyPresetBoundConfigOverSync(r, embedded);
     } else {
       var data = loadJson(STORAGE.REMOTE, function () {
         return {};
       });
       r = Object.assign({}, defaultRemote(), embedded, data);
+      applyPresetBoundConfigOverSync(r, embedded);
     }
     delete r.rebuy;
     delete r.addon;
@@ -127,15 +130,53 @@
 
   function getPresets() {
     var list = loadJson(STORAGE.PRESETS, defaultPresets);
-    return Array.isArray(list) && list.length ? list : defaultPresets();
+    if (!Array.isArray(list) || !list.length) list = defaultPresets();
+    if (window.MetisSheetSync && MetisSheetSync.filterOutDeletedPresets) {
+      list = MetisSheetSync.filterOutDeletedPresets(list);
+    }
+    return list;
   }
 
   function savePresets(list, options) {
     options = options || {};
-    localStorage.setItem(STORAGE.PRESETS, JSON.stringify(list));
-    if (!options.skipCloudPush && window.MetisSheetSync) {
-      MetisSheetSync.savePresetsToCloud(list, getActivePresetId());
+    var safe = Array.isArray(list) ? list.slice() : [];
+    if (window.MetisSheetSync && MetisSheetSync.filterOutDeletedPresets) {
+      safe = MetisSheetSync.filterOutDeletedPresets(safe);
     }
+    localStorage.setItem(STORAGE.PRESETS, JSON.stringify(safe));
+    if (!options.skipCloudPush && window.MetisSheetSync) {
+      MetisSheetSync.savePresetsToCloud(safe, getActivePresetId(), {
+        changedPresetIds: options.changedPresetIds || null,
+        deletedPresetIds: options.deletedPresetIds || null,
+        pushAllPresets: !!options.pushAllPresets,
+        urgent: !!options.urgent,
+      });
+    }
+  }
+
+  function clonePresetData(p) {
+    try {
+      return JSON.parse(JSON.stringify(p));
+    } catch (e0) {
+      return Object.assign({}, p);
+    }
+  }
+
+  function findPresetByIdLocal(list, id) {
+    if (!id || !Array.isArray(list)) return null;
+    var sid = String(id);
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && String(list[i].id) === sid) return list[i];
+    }
+    return null;
+  }
+
+  function replacePresetById(list, id, nextPreset) {
+    var sid = String(id);
+    return (list || []).map(function (p) {
+      if (p && String(p.id) === sid) return nextPreset;
+      return p;
+    });
   }
 
   /** 프리셋 객체에 함께 저장되는 대회·참가 정보 필드 */
@@ -166,6 +207,9 @@
     "leftPanelRotate",
   ];
 
+  /** 프리셋 ID에 묶인 대회 설정 (바인칩 등) — 실시간 인원과 분리 */
+  var PRESET_BOUND_CONFIG_KEYS = ["entryChips", "regCloseLevel"];
+
   function applyPresetMetadataOverSync(target, embedded) {
     if (!target || !embedded) return target;
     for (var i = 0; i < PRESET_METADATA_KEYS.length; i++) {
@@ -193,6 +237,15 @@
     return target;
   }
 
+  function applyPresetBoundConfigOverSync(target, embedded) {
+    if (!target || !embedded) return target;
+    for (var i = 0; i < PRESET_BOUND_CONFIG_KEYS.length; i++) {
+      var k = PRESET_BOUND_CONFIG_KEYS[i];
+      if (embedded[k] !== undefined) target[k] = embedded[k];
+    }
+    return target;
+  }
+
   function migrateLegacyTimerSync() {
     try {
       var legacy = localStorage.getItem("metis_timer_sync");
@@ -215,7 +268,8 @@
     var list = getPresets();
     var d = defaultRemote();
     var changed = false;
-    list.forEach(function (p) {
+    var next = list.map(function (orig) {
+      var p = clonePresetData(orig);
       PRESET_TOURNAMENT_KEYS.forEach(function (k) {
         if (p[k] === undefined) {
           p[k] = d[k];
@@ -232,8 +286,9 @@
           p.leftFontScale != null ? p.leftFontScale : d.prizeFontScale;
         changed = true;
       }
+      return p;
     });
-    if (changed) savePresets(list, { skipCloudPush: true });
+    if (changed) savePresets(next, { skipCloudPush: true });
   }
 
   function migrateFontScales(state) {
@@ -261,10 +316,9 @@
     var aid = getActivePresetId();
     if (!aid) return;
     var list = getPresets();
-    var idx = list.findIndex(function (x) {
-      return x.id === aid;
-    });
-    if (idx < 0) return;
+    var current = findPresetByIdLocal(list, aid);
+    if (!current) return;
+    var updated = clonePresetData(current);
     for (var i = 0; i < PRESET_TOURNAMENT_KEYS.length; i++) {
       var k = PRESET_TOURNAMENT_KEYS[i];
       if (remoteState[k] === undefined) continue;
@@ -273,17 +327,17 @@
         PRESET_METADATA_KEYS.indexOf(k) >= 0 &&
         MetisTimer.isPresetMetadataEmpty &&
         MetisTimer.isPresetMetadataEmpty(k, remoteState[k]) &&
-        !MetisTimer.isPresetMetadataEmpty(k, list[idx][k])
+        !MetisTimer.isPresetMetadataEmpty(k, updated[k])
       ) {
         continue;
       }
       if (k === "prizeItems" && Array.isArray(remoteState[k])) {
-        list[idx][k] = remoteState[k].slice();
+        updated[k] = remoteState[k].slice();
       } else {
-        list[idx][k] = remoteState[k];
+        updated[k] = remoteState[k];
       }
     }
-    savePresets(list, options);
+    savePresets(replacePresetById(list, aid, updated), options);
   }
 
   function tournamentSliceFromRemote() {
@@ -597,7 +651,57 @@
   }
 
   function uid() {
-    return "p_" + Math.random().toString(36).slice(2, 11);
+    try {
+      if (window.crypto && crypto.randomUUID) {
+        return "p_" + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+      }
+    } catch (e0) {}
+    return (
+      "p_" +
+      Date.now().toString(36) +
+      "_" +
+      Math.random().toString(36).slice(2, 10)
+    );
+  }
+
+  /** 프리셋 삭제: UI·localStorage·timer_state·클라우드 톰스톤까지 ID 기준으로 제거 */
+  function deletePresetById(presetId) {
+    var pid = String(presetId || "");
+    if (!pid) return;
+    var list = getPresets();
+    var next = list.filter(function (x) {
+      return x && String(x.id) !== pid;
+    });
+    var wasActive = String(getActivePresetId()) === pid;
+
+    if (window.MetisSheetSync && MetisSheetSync.deletePresetsByIds) {
+      MetisSheetSync.deletePresetsByIds([pid], next, { urgent: true });
+    } else {
+      savePresets(next, {
+        skipCloudPush: false,
+        deletedPresetIds: [pid],
+        urgent: true,
+      });
+      try {
+        localStorage.removeItem("timer_state_" + pid);
+      } catch (e0) {}
+    }
+
+    if (wasActive) setActivePresetId("");
+    if (editingPresetId && String(editingPresetId) === pid) {
+      editingPresetId = null;
+      closeModal();
+    }
+    renderPresets();
+    // persistAll은 클라우드 pending의 deletedPresetIds를 덮어쓸 수 있어
+    // 삭제 직후에는 로컬 타이머만 맞춤
+    if (!wasActive && getActivePresetId()) {
+      mergeRemoteIntoActivePreset({ skipCloudPush: true });
+      persistTimerSync({ skipCloudPush: true });
+    } else {
+      remoteState = getRemote();
+      renderRemote();
+    }
   }
 
   migrateLegacyTimerSync();
@@ -643,6 +747,7 @@
     MetisTimer.setSyncPresetId(getActivePresetId());
     MetisTimer.writeSyncState(buildFullSync(true), {
       skipPresetEmbed: true,
+      skipCloudPush: !!options.skipCloudPush,
       userAction: !!options.userAction,
       bumpStats: !!options.bumpStats,
       urgentCloudPush: !!options.urgentCloudPush,
@@ -692,6 +797,8 @@
       entry: remoteState.entry,
       activePresetId: getActivePresetId(),
     });
+    // 바인칩 등 대회 설정을 활성 프리셋에 즉시 반영 (다른 프리셋과 섞이지 않게)
+    mergeRemoteIntoActivePreset({ skipCloudPush: true });
     persistTimerSync({ bumpStats: true, urgentCloudPush: true });
     schedulePresetSnapshot();
   }
@@ -1462,19 +1569,7 @@
       cell.appendChild(
         mkBtn("삭제", "red", function () {
           if (!confirm("이 프리셋을 삭제할까요?")) return;
-          var next = presets.filter(function (x) {
-            return x.id !== p.id;
-          });
-          savePresets(next, { skipCloudPush: true });
-          if (window.MetisSheetSync) {
-            MetisSheetSync.savePresetsToCloud(next, getActivePresetId(), {
-              deletedPresetIds: [p.id],
-              urgent: true,
-            });
-          }
-          if (getActivePresetId() === p.id) setActivePresetId("");
-          renderPresets();
-          persistAll();
+          deletePresetById(p.id);
         })
       );
       presetTbody.appendChild(tr);
@@ -1898,41 +1993,44 @@
       }
     }
     var list = getPresets();
-    if (editingPresetId) {
-      var i = list.findIndex(function (x) {
-        return x.id === editingPresetId;
-      });
-      if (i >= 0) {
-        var patch = {
-          name: name,
-          levels: levels,
-          regCloseAfterPlayLevel: regCloseAfterPlayLevel,
-          preGameWaitMinutes: preGameWaitMinutes,
-        };
-        if (editingPresetId === getActivePresetId()) {
-          Object.assign(patch, tournamentSliceFromRemote());
-        } else {
-          Object.assign(patch, pickEmbeddedTournament(list[i]));
-        }
-        list[i] = Object.assign({}, list[i], patch);
+    var savedPresetId = editingPresetId ? String(editingPresetId) : "";
+    if (savedPresetId) {
+      var existing = findPresetByIdLocal(list, savedPresetId);
+      if (!existing) {
+        alert("수정할 프리셋을 찾을 수 없습니다.");
+        return;
       }
+      var patch = {
+        name: name,
+        levels: levels,
+        regCloseAfterPlayLevel: regCloseAfterPlayLevel,
+        preGameWaitMinutes: preGameWaitMinutes,
+      };
+      if (String(savedPresetId) === String(getActivePresetId())) {
+        Object.assign(patch, tournamentSliceFromRemote());
+      } else {
+        Object.assign(patch, pickEmbeddedTournament(existing));
+      }
+      var updated = Object.assign(clonePresetData(existing), patch);
+      updated.id = savedPresetId;
+      list = replacePresetById(list, savedPresetId, updated);
     } else {
-      list.push(
+      savedPresetId = uid();
+      if (window.MetisSheetSync && MetisSheetSync.clearDeletedPresetTombstones) {
+        MetisSheetSync.clearDeletedPresetTombstones([savedPresetId]);
+      }
+      list = list.concat([
         Object.assign(
           {
-            id: uid(),
+            id: savedPresetId,
             name: name,
             levels: levels,
             regCloseAfterPlayLevel: regCloseAfterPlayLevel,
             preGameWaitMinutes: preGameWaitMinutes,
           },
           collectNewPresetTournamentFromModal()
-        )
-      );
-    }
-    var savedPresetId = editingPresetId;
-    if (!savedPresetId && list.length) {
-      savedPresetId = list[list.length - 1].id;
+        ),
+      ]);
     }
     savePresets(list, { skipCloudPush: true });
     if (savedPresetId && window.MetisSheetSync) {
@@ -1943,7 +2041,8 @@
     }
     closeModal();
     renderPresets();
-    persistAll();
+    mergeRemoteIntoActivePreset({ skipCloudPush: true });
+    persistTimerSync({ skipCloudPush: true });
     showSaveToast(
       editingPresetId ? "프리셋이 저장되었습니다." : "새 프리셋이 추가되었습니다."
     );

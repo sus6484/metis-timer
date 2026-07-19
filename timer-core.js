@@ -112,6 +112,13 @@
     "leftPanelRotate",
   ];
 
+  /**
+   * 프리셋 ID에 묶인 대회 설정 (실시간 인원과 분리).
+   * entryChips·regCloseLevel은 타이머 루트에 남아 다른 프리셋 값으로 덮일 수 있어
+   * 항상 activePresetId / syncPresetId로 해당 프리셋에서만 가져온다.
+   */
+  var PRESET_BOUND_CONFIG_KEYS = ["entryChips", "regCloseLevel"];
+
   function isPresetMetadataEmpty(key, val) {
     if (val === undefined || val === null) return true;
     if (key === "prizeItems") return !Array.isArray(val) || val.length === 0;
@@ -167,7 +174,14 @@
       var raw = localStorage.getItem(PRESETS_STORAGE_KEY);
       if (!raw) return [];
       var arr = JSON.parse(raw);
-      return Array.isArray(arr) ? arr : [];
+      var list = Array.isArray(arr) ? arr : [];
+      if (
+        global.MetisSheetSync &&
+        typeof global.MetisSheetSync.filterOutDeletedPresets === "function"
+      ) {
+        return global.MetisSheetSync.filterOutDeletedPresets(list);
+      }
+      return list;
     } catch (e) {
       return [];
     }
@@ -175,7 +189,14 @@
 
   function savePresetsToStorage(presets) {
     try {
-      localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets));
+      var list = Array.isArray(presets) ? presets.slice() : [];
+      if (
+        global.MetisSheetSync &&
+        typeof global.MetisSheetSync.filterOutDeletedPresets === "function"
+      ) {
+        list = global.MetisSheetSync.filterOutDeletedPresets(list);
+      }
+      localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(list));
     } catch (e) {}
   }
 
@@ -212,22 +233,44 @@
     if (syncPresetId) state.activePresetId = syncPresetId;
   }
 
+  function findPresetIndexById(presets, id) {
+    if (!id || !Array.isArray(presets)) return -1;
+    var sid = String(id);
+    for (var i = 0; i < presets.length; i++) {
+      if (presets[i] && String(presets[i].id) === sid) return i;
+    }
+    return -1;
+  }
+
+  function findPresetInList(presets, id) {
+    var idx = findPresetIndexById(presets, id);
+    return idx >= 0 ? presets[idx] : null;
+  }
+
   function embedActivePresetTournament(state) {
     if (!state || typeof state !== "object" || !syncPresetId) return;
     var presets = loadPresetsFromStorage();
-    var idx = -1;
-    for (var i = 0; i < presets.length; i++) {
-      if (presets[i].id === syncPresetId) {
-        idx = i;
-        break;
-      }
-    }
+    var idx = findPresetIndexById(presets, syncPresetId);
     if (idx < 0) return;
+    var updated = null;
+    try {
+      updated = JSON.parse(JSON.stringify(presets[idx]));
+    } catch (e0) {
+      updated = Object.assign({}, presets[idx]);
+    }
     for (var j = 0; j < PRESET_METADATA_ONLY_KEYS.length; j++) {
       var key = PRESET_METADATA_ONLY_KEYS[j];
-      if (state[key] !== undefined) presets[idx][key] = state[key];
+      if (state[key] !== undefined) updated[key] = state[key];
     }
-    savePresetsToStorage(presets);
+    for (var c = 0; c < PRESET_BOUND_CONFIG_KEYS.length; c++) {
+      var ck = PRESET_BOUND_CONFIG_KEYS[c];
+      if (state[ck] !== undefined) updated[ck] = state[ck];
+    }
+    updated.id = String(syncPresetId);
+    var next = presets.map(function (p, i) {
+      return i === idx ? updated : p;
+    });
+    savePresetsToStorage(next);
   }
 
   function shouldApplyMetadataField(key, presetVal, stateVal) {
@@ -260,30 +303,69 @@
     return state;
   }
 
-  /** 프리셋 전환 시 이전 프리셋 대회명 등이 남지 않도록 메타데이터를 즉시 교체 */
+  /** 활성 프리셋 ID의 바인칩·레지마감 등 대회 설정을 timer state 루트에 강제 반영 */
+  function copyPresetBoundConfigIntoState(state, preset) {
+    if (!state || !preset) return state;
+    for (var i = 0; i < PRESET_BOUND_CONFIG_KEYS.length; i++) {
+      var key = PRESET_BOUND_CONFIG_KEYS[i];
+      if (preset[key] === undefined) continue;
+      state[key] = preset[key];
+    }
+    return state;
+  }
+
+  function mergeActivePresetBoundConfigIntoState(state) {
+    if (!state) return state;
+    var preset =
+      getActivePreset(state) ||
+      findPresetInList(state.presets || loadPresetsFromStorage(), syncPresetId);
+    return copyPresetBoundConfigIntoState(state, preset);
+  }
+
+  /** 활성 프리셋의 entryChips (없으면 state 값) */
+  function resolveActiveEntryChips(state) {
+    var preset =
+      getActivePreset(state) ||
+      findPresetInList(
+        (state && state.presets) || loadPresetsFromStorage(),
+        (state && state.activePresetId) || syncPresetId
+      );
+    if (preset && preset.entryChips !== undefined) {
+      return Math.max(0, Math.floor(Number(preset.entryChips) || 0));
+    }
+    return Math.max(0, Math.floor(Number(state && state.entryChips) || 0));
+  }
+
+  /** 프리셋 전환 시 이전 프리셋 대회명·바인칩 등이 남지 않도록 즉시 교체 */
   function applyActivePresetMetadataOnSwitch(presetId) {
     if (!presetId) return false;
-    setSyncPresetId(String(presetId));
+    var pid = String(presetId);
+    setSyncPresetId(pid);
     var presets = loadPresetsFromStorage();
-    var preset = null;
-    for (var i = 0; i < presets.length; i++) {
-      if (presets[i] && presets[i].id === presetId) {
-        preset = presets[i];
-        break;
-      }
-    }
+    var preset = findPresetInList(presets, pid);
     if (!preset) return false;
-    var state = readSyncState();
+    var state = null;
+    try {
+      var raw = localStorage.getItem(getSyncStorageKey());
+      if (raw) state = JSON.parse(raw);
+    } catch (e0) {}
     if (!state) state = buildInitialTimerState();
     if (!state) return false;
+    delete state.rebuy;
+    delete state.addon;
+    delete state.rebuyChips;
+    delete state.addonChips;
+    delete state.early;
+    delete state.earlyChips;
     mergePresetsIntoState(state);
-    state.activePresetId = String(presetId);
+    state.activePresetId = pid;
     for (var j = 0; j < PRESET_METADATA_ONLY_KEYS.length; j++) {
       var key = PRESET_METADATA_ONLY_KEYS[j];
       if (preset[key] !== undefined) {
         state[key] = copyMetadataValue(key, preset[key]);
       }
     }
+    copyPresetBoundConfigIntoState(state, preset);
     state.timer = normalizeTimer(state.timer, state);
     ensureTotalSecondsState(state);
     syncLevelField(state);
@@ -291,7 +373,7 @@
     return true;
   }
 
-  /** 활성 프리셋 메타데이터를 타이머 동기화 상태에 즉시 반영 */
+  /** 활성 프리셋 메타데이터·바인칩을 타이머 동기화 상태에 즉시 반영 */
   function flushActivePresetMetadataToTimer() {
     var presets = loadPresetsFromStorage();
     var aid = syncPresetId;
@@ -300,14 +382,9 @@
       if (storedActive) aid = storedActive;
     } catch (e0) {}
     if (!aid) return false;
+    aid = String(aid);
     setSyncPresetId(aid);
-    var preset = null;
-    for (var i = 0; i < presets.length; i++) {
-      if (presets[i] && presets[i].id === aid) {
-        preset = presets[i];
-        break;
-      }
-    }
+    var preset = findPresetInList(presets, aid);
     if (!preset) return false;
     var state = null;
     try {
@@ -323,7 +400,9 @@
     delete state.early;
     delete state.earlyChips;
     mergePresetsIntoState(state);
+    state.activePresetId = aid;
     copyPresetMetadataIntoState(state, preset);
+    copyPresetBoundConfigIntoState(state, preset);
     state.timer = normalizeTimer(state.timer, state);
     ensureTotalSecondsState(state);
     syncLevelField(state);
@@ -429,11 +508,12 @@
   }
 
   function getActivePreset(state) {
-    if (!state || !state.presets || !state.activePresetId) return null;
-    var p = state.presets.filter(function (x) {
-      return x.id === state.activePresetId;
-    })[0];
-    return p || null;
+    if (!state || !state.presets) return null;
+    var aid =
+      syncPresetId ||
+      (state.activePresetId != null ? String(state.activePresetId) : "");
+    if (!aid) return null;
+    return findPresetInList(state.presets, aid);
   }
 
   function getActiveLevels(state) {
@@ -536,7 +616,9 @@
       delete state.early;
       delete state.earlyChips;
       mergePresetsIntoState(state);
+      if (syncPresetId) state.activePresetId = String(syncPresetId);
       mergeActivePresetMetadataIntoState(state);
+      mergeActivePresetBoundConfigIntoState(state);
       state.timer = normalizeTimer(state.timer, state);
       ensureTotalSecondsState(state);
       syncLevelField(state);
@@ -902,6 +984,8 @@
       var sk = STATS_SYNC_KEYS[si];
       if (cloudSlice[sk] !== undefined) state[sk] = cloudSlice[sk];
     }
+    // 바인칩·레지마감은 이 기기의 활성 프리셋 설정을 우선 (클라우드 슬라이스 오염 방지)
+    mergeActivePresetBoundConfigIntoState(state);
     if (cloudSlice.presetId) {
       state.presetId = String(cloudSlice.presetId);
     }
@@ -1210,6 +1294,7 @@
   function writeSyncState(state, options) {
     options = options || {};
     mergePresetsIntoState(state);
+    if (syncPresetId) state.activePresetId = String(syncPresetId);
     if (!options.skipPresetEmbed) embedActivePresetTournament(state);
     reconcileRunningEndAt(state, Date.now());
     assignSyncTimestamps(state, options);
@@ -1288,20 +1373,14 @@
   function buildInitialTimerState() {
     var presets = loadPresetsFromStorage();
     if (!syncPresetId) return null;
-    var p = null;
-    for (var i = 0; i < presets.length; i++) {
-      if (presets[i].id === syncPresetId) {
-        p = presets[i];
-        break;
-      }
-    }
+    var p = findPresetInList(presets, syncPresetId);
     if (!p) return null;
     var tour = tournamentFieldsFromPreset(p);
     var levels = p.levels && p.levels.length ? p.levels : null;
     var dur = levels && levels.length ? levelDurationSec(levels[0]) : 0;
     var state = Object.assign({}, tour, {
       presets: presets,
-      activePresetId: syncPresetId,
+      activePresetId: String(syncPresetId),
       timer: defaultTimer(),
       timerStatus: "대기중",
       displayTime: levels && levels.length ? formatMMSS(dur) : "00:00",
@@ -1774,6 +1853,10 @@
     defaultTimer: defaultTimer,
     getActivePreset: getActivePreset,
     getActiveLevels: getActiveLevels,
+    resolveActiveEntryChips: resolveActiveEntryChips,
+    findPresetInList: findPresetInList,
+    mergeActivePresetBoundConfigIntoState: mergeActivePresetBoundConfigIntoState,
+    PRESET_BOUND_CONFIG_KEYS: PRESET_BOUND_CONFIG_KEYS,
     isBreakRow: isBreakRow,
     levelDurationSec: levelDurationSec,
     formatMMSS: formatMMSS,

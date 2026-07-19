@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbwfALH6tDcW9Q4yQnh-_Re6rgyNAERtndqlVVYkbZYJv1g0PRSUMw939JE5-2wv6o5wsw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260708b",
+    assetVersion: "20260719b",
   };
 
   var CLOUD_PULL_RETRY_DELAYS_MS = [0, 600, 1500];
@@ -24,6 +24,7 @@
   var STORAGE_ACTIVE = "metis_activePresetId";
   var STORAGE_CLOUD_UPDATED = "metis_lastCloudUpdatedAt";
   var STORAGE_PRESET_CLOUD_TS = "metis_presetCloudTimestamps";
+  var STORAGE_DELETED_PRESETS = "metis_deletedPresetIds";
 
   var pullPromise = null;
   var saveTimer = null;
@@ -156,13 +157,14 @@
       var raw = localStorage.getItem(STORAGE_PRESETS);
       if (!raw) return [];
       var parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+      var list = Array.isArray(parsed) ? parsed : [];
+      return filterOutDeletedPresets(list);
     } catch (e0) {
       return [];
     }
   }
 
-  var PRESET_REALTIME_COMPARE_KEYS = ["player", "entry", "entryChips", "regCloseLevel"];
+  var PRESET_REALTIME_COMPARE_KEYS = ["player", "entry"];
 
   function presetForCloudCompare(p) {
     if (!p || typeof p !== "object") return p;
@@ -231,29 +233,102 @@
 
   function findPresetById(list, id) {
     if (!id || !Array.isArray(list)) return null;
+    var sid = String(id);
     for (var i = 0; i < list.length; i++) {
-      if (list[i] && list[i].id === id) return list[i];
+      if (list[i] && String(list[i].id) === sid) return list[i];
     }
     return null;
+  }
+
+  function loadDeletedPresetIds() {
+    try {
+      var raw = localStorage.getItem(STORAGE_DELETED_PRESETS);
+      if (!raw) return {};
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      return parsed;
+    } catch (e0) {
+      return {};
+    }
+  }
+
+  function saveDeletedPresetIds(map) {
+    try {
+      localStorage.setItem(STORAGE_DELETED_PRESETS, JSON.stringify(map || {}));
+    } catch (e1) {}
+  }
+
+  /** 로컬에서 삭제한 프리셋 ID를 톰스톤으로 기록 (클라우드 pull이 되살리지 못하게) */
+  function markPresetsDeletedLocally(ids) {
+    if (!ids || !ids.length) return;
+    var map = loadDeletedPresetIds();
+    var now = Date.now();
+    for (var i = 0; i < ids.length; i++) {
+      var pid = String(ids[i] || "");
+      if (!pid) continue;
+      map[pid] = now;
+    }
+    saveDeletedPresetIds(map);
+  }
+
+  function clearDeletedPresetTombstones(ids) {
+    if (!ids || !ids.length) return;
+    var map = loadDeletedPresetIds();
+    var changed = false;
+    for (var i = 0; i < ids.length; i++) {
+      var pid = String(ids[i] || "");
+      if (!pid || !Object.prototype.hasOwnProperty.call(map, pid)) continue;
+      delete map[pid];
+      changed = true;
+    }
+    if (changed) saveDeletedPresetIds(map);
+  }
+
+  function isPresetDeletedLocally(id) {
+    if (!id) return false;
+    var map = loadDeletedPresetIds();
+    return Object.prototype.hasOwnProperty.call(map, String(id));
+  }
+
+  function filterOutDeletedPresets(list) {
+    list = Array.isArray(list) ? list : [];
+    var map = loadDeletedPresetIds();
+    if (!Object.keys(map).length) return list.slice();
+    return list.filter(function (p) {
+      return p && p.id && !Object.prototype.hasOwnProperty.call(map, String(p.id));
+    });
+  }
+
+  function clonePreset(p) {
+    if (!p || typeof p !== "object") return p;
+    try {
+      return JSON.parse(JSON.stringify(p));
+    } catch (e0) {
+      return Object.assign({}, p);
+    }
   }
 
   /**
    * 클라우드 프리셋을 presetId별 타임스탬프로 병합한다.
    * 로컬에 더 최신인 프리셋은 유지하고, 클라우드가 더 최신인 프리셋만 반영한다.
+   * 로컬에서 삭제한 ID(톰스톤)는 클라우드에 남아 있어도 다시 추가하지 않는다.
    */
   function mergeCloudPresetsIntoLocal(cloudPresets, cloudTimestamps) {
     cloudPresets = Array.isArray(cloudPresets) ? cloudPresets : [];
     cloudTimestamps = cloudTimestamps || {};
     if (!cloudPresets.length) return { merged: null, applied: false };
 
-    var localList = loadLocalPresetsList();
+    var deletedMap = loadDeletedPresetIds();
+    var localList = filterOutDeletedPresets(loadLocalPresetsList());
     if (!localList.length) {
-      var freshOut = cloudPresets.slice();
+      var freshOut = [];
       var freshTs = loadPresetCloudTimestamps();
       for (var fi = 0; fi < cloudPresets.length; fi++) {
         var fp = cloudPresets[fi];
         if (!fp || !fp.id) continue;
         var fpid = String(fp.id);
+        if (Object.prototype.hasOwnProperty.call(deletedMap, fpid)) continue;
+        freshOut.push(clonePreset(fp));
         var ft = Number(cloudTimestamps[fpid]) || 0;
         if (ft > 0) freshTs[fpid] = ft;
       }
@@ -261,15 +336,10 @@
       return { merged: freshOut, applied: true };
     }
     var localTs = loadPresetCloudTimestamps();
-    var localById = {};
-    localList.forEach(function (p) {
-      if (p && p.id) localById[p.id] = p;
-    });
-
-    var out = localList.slice();
+    var out = localList.map(clonePreset);
     var outIndex = {};
     out.forEach(function (p, idx) {
-      if (p && p.id) outIndex[p.id] = idx;
+      if (p && p.id) outIndex[String(p.id)] = idx;
     });
 
     var changed = false;
@@ -277,13 +347,13 @@
       var cloudP = cloudPresets[i];
       if (!cloudP || !cloudP.id) continue;
       var pid = String(cloudP.id);
+      if (Object.prototype.hasOwnProperty.call(deletedMap, pid)) continue;
+
       var cloudT = Number(cloudTimestamps[pid]) || 0;
       var localT = Number(localTs[pid]) || 0;
       if (cloudT > 0 && cloudT <= localT) continue;
 
-      // presetId별 LWW: cloudT가 localT보다 크면 클라우드 프리셋 전체를 그대로 반영한다.
-      // mergePresetRecord(로컬 비어있지 않은 필드 우선)는 구버전 데이터가 새 클라우드를 덮는 원인이었다.
-      var mergedP = JSON.parse(JSON.stringify(cloudP));
+      var mergedP = clonePreset(cloudP);
 
       if (outIndex[pid] !== undefined) {
         if (!presetsJsonEqual([out[outIndex[pid]]], [mergedP])) {
@@ -387,8 +457,20 @@
 
   function forceApplyCloudPresets(data) {
     var result = { applied: false, activePresetChanged: false };
-    if (!data || !Array.isArray(data.presets) || !data.presets.length) return result;
-    var cloudPresets = JSON.parse(JSON.stringify(data.presets));
+    if (data && Array.isArray(data.deletedPresetIds) && data.deletedPresetIds.length) {
+      markPresetsDeletedLocally(data.deletedPresetIds);
+    }
+    if (!data || !Array.isArray(data.presets) || !data.presets.length) {
+      if (data && Array.isArray(data.deletedPresetIds) && data.deletedPresetIds.length) {
+        var onlyFiltered = filterOutDeletedPresets(loadLocalPresetsList());
+        localStorage.setItem(STORAGE_PRESETS, JSON.stringify(onlyFiltered));
+        result.applied = true;
+      }
+      return result;
+    }
+    var cloudPresets = filterOutDeletedPresets(
+      JSON.parse(JSON.stringify(data.presets))
+    );
     var changed = !presetsJsonEqual(loadLocalPresetsList(), cloudPresets);
     localStorage.setItem(STORAGE_PRESETS, JSON.stringify(cloudPresets));
     if (data.presetTimestamps) {
@@ -410,6 +492,10 @@
     options = options || {};
     var result = { applied: false, activePresetChanged: false };
 
+    if (data && Array.isArray(data.deletedPresetIds) && data.deletedPresetIds.length) {
+      markPresetsDeletedLocally(data.deletedPresetIds);
+    }
+
     if (data && data.presetTimestamps) {
       adoptPresetCloudTimestamps(data.presetTimestamps);
     }
@@ -430,6 +516,12 @@
         }
       }
       adoptCloudUpdatedAt(data.updatedAt);
+    } else if (data && Array.isArray(data.deletedPresetIds) && data.deletedPresetIds.length) {
+      var filtered = filterOutDeletedPresets(loadLocalPresetsList());
+      if (!presetsJsonEqual(loadLocalPresetsList(), filtered)) {
+        localStorage.setItem(STORAGE_PRESETS, JSON.stringify(filtered));
+        result.applied = true;
+      }
     }
 
     return result;
@@ -1354,6 +1446,52 @@
       });
   }
 
+  function mergePendingPresetSave(prev, next) {
+    if (!prev) return next;
+    if (!next) return prev;
+    var delMap = {};
+    function addDels(arr) {
+      if (!arr || !arr.length) return;
+      for (var i = 0; i < arr.length; i++) {
+        var id = String(arr[i] || "");
+        if (id) delMap[id] = true;
+      }
+    }
+    addDels(prev.deletedPresetIds);
+    addDels(next.deletedPresetIds);
+
+    var byId = {};
+    function addPresets(list) {
+      if (!list || !list.length) return;
+      for (var j = 0; j < list.length; j++) {
+        var p = list[j];
+        if (!p || !p.id) continue;
+        var pid = String(p.id);
+        if (delMap[pid]) continue;
+        byId[pid] = clonePreset(p);
+      }
+    }
+    addPresets(prev.presets);
+    addPresets(next.presets);
+
+    var mergedTs = Object.assign({}, prev.presetTimestamps || {}, next.presetTimestamps || {});
+    var deletedPresetIds = Object.keys(delMap);
+    for (var d = 0; d < deletedPresetIds.length; d++) {
+      delete mergedTs[deletedPresetIds[d]];
+      delete byId[deletedPresetIds[d]];
+    }
+
+    var presets = Object.keys(byId).map(function (k) {
+      return byId[k];
+    });
+    return {
+      presets: presets,
+      presetTimestamps: mergedTs,
+      deletedPresetIds: deletedPresetIds.length ? deletedPresetIds : null,
+      pushedPresetIds: Object.keys(mergedTs),
+    };
+  }
+
   function savePresetsToCloud(presets, activePresetId, options) {
     options = options || {};
     var built = buildPresetsPushPayload(presets, {
@@ -1362,15 +1500,65 @@
       changedPresetIds: options.changedPresetIds || null,
       deletedPresetIds: options.deletedPresetIds || null,
     });
+    if (options.deletedPresetIds && options.deletedPresetIds.length) {
+      markPresetsDeletedLocally(options.deletedPresetIds);
+    }
     if (!built.presets.length && !(built.deletedPresetIds && built.deletedPresetIds.length)) {
       return;
     }
-    pendingSave = built;
+    // 연속 save가 pending을 덮어쓰며 deletedPresetIds가 사라지지 않게 병합
+    pendingSave = mergePendingPresetSave(pendingSave, built);
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
       saveTimer = null;
       flushSave();
     }, options.urgent ? 80 : 400);
+  }
+
+  /**
+   * 프리셋 삭제: 로컬 목록·톰스톤·timer_state·클라우드까지 ID 기준으로 제거
+   */
+  function deletePresetsByIds(presetIds, remainingPresets, options) {
+    options = options || {};
+    var ids = (presetIds || []).map(String).filter(Boolean);
+    if (!ids.length) return;
+    markPresetsDeletedLocally(ids);
+
+    var next = filterOutDeletedPresets(
+      Array.isArray(remainingPresets) ? remainingPresets : loadLocalPresetsList()
+    );
+    try {
+      localStorage.setItem(STORAGE_PRESETS, JSON.stringify(next));
+    } catch (e0) {}
+
+    for (var i = 0; i < ids.length; i++) {
+      var pid = ids[i];
+      try {
+        localStorage.removeItem("timer_state_" + pid);
+        localStorage.removeItem("metis_timer_window_alive_" + pid);
+      } catch (e1) {}
+      try {
+        var ts = loadPresetCloudTimestamps();
+        if (ts[pid] != null) {
+          delete ts[pid];
+          savePresetCloudTimestamps(ts);
+        }
+      } catch (e2) {}
+    }
+
+    var active = getActivePresetIdFromStorage();
+    if (active && ids.indexOf(String(active)) >= 0) {
+      try {
+        localStorage.setItem(STORAGE_ACTIVE, "");
+      } catch (e3) {}
+      active = "";
+    }
+
+    savePresetsToCloud(next, active || null, {
+      deletedPresetIds: ids,
+      pushAllPresets: !!options.pushAllPresets,
+      urgent: options.urgent !== false,
+    });
   }
 
   function loadScript(src) {
@@ -1441,6 +1629,11 @@
     updateCloudPollPinnedPreset: updateCloudPollPinnedPreset,
     pullPresetsToLocal: pullPresetsToLocal,
     savePresetsToCloud: savePresetsToCloud,
+    deletePresetsByIds: deletePresetsByIds,
+    markPresetsDeletedLocally: markPresetsDeletedLocally,
+    clearDeletedPresetTombstones: clearDeletedPresetTombstones,
+    isPresetDeletedLocally: isPresetDeletedLocally,
+    filterOutDeletedPresets: filterOutDeletedPresets,
     saveTimerStateToCloud: saveTimerStateToCloud,
     pollTimerStatesFromCloud: pollTimerStatesFromCloud,
     pullAndApplyPresetTimerState: pullAndApplyPresetTimerState,
