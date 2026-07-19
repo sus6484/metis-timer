@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbwfALH6tDcW9Q4yQnh-_Re6rgyNAERtndqlVVYkbZYJv1g0PRSUMw939JE5-2wv6o5wsw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260719e",
+    assetVersion: "20260719f",
   };
 
   var CLOUD_PULL_RETRY_DELAYS_MS = [0, 600, 1500];

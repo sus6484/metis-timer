@@ -829,17 +829,32 @@ function applyPresetsSnapshot(snapshot) {
     }
     var rU = presetUpdatedAt(rp);
     var lU = presetUpdatedAt(lp);
-    if (rU >= lU) {
-      var merged = mergeLocalTournamentOntoRemote(lp, rp);
-      out.push(merged);
-      if (rU > lU || JSON.stringify(normalizePresetForFs(lp)) !== JSON.stringify(rp)) {
-        changed = true;
-      }
-    } else {
+    if (rU > lU) {
+      // Firestore가 더 최신 → 강제 적용 (SSOT)
+      out.push(mergeLocalTournamentOntoRemote(lp, rp));
+      changed = true;
+    } else if (rU < lU) {
       // 로컬이 더 최신 → 유지 후 Firestore에 재푸시
-      var localNorm = normalizePresetForFs(lp);
-      out.push(localNorm || lp);
-      if (localNorm) toPush.push(localNorm);
+      var localNormNewer = normalizePresetForFs(lp);
+      out.push(localNormNewer || lp);
+      if (localNormNewer) toPush.push(localNormNewer);
+    } else {
+      // 동일 updatedAt: 내용이 다르면 로컬 편집 중으로 보고 로컬 유지+재푸시
+      // (예전 버그: 로컬만 이름 바꾸고 updatedAt 미갱신 → 옛 Firestore가 덮어씀)
+      var localNormEq = normalizePresetForFs(lp);
+      var sameContent = false;
+      try {
+        sameContent =
+          JSON.stringify(localNormEq) === JSON.stringify(rp);
+      } catch (eEq) {
+        sameContent = false;
+      }
+      if (sameContent) {
+        out.push(rp);
+      } else {
+        out.push(localNormEq || lp);
+        if (localNormEq) toPush.push(localNormEq);
+      }
     }
   });
 

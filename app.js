@@ -149,7 +149,7 @@
     ) {
       safe = MetisFirestoreSync.filterDeletedPresetsFs(safe);
     }
-    // Firestore 동기화용 updatedAt 부여
+    // Firestore 동기화용 updatedAt — 로컬만 저장해도 반드시 올려 LWW 역전 방지
     var now = Date.now();
     var changedIds = options.changedPresetIds
       ? options.changedPresetIds.map(String)
@@ -161,11 +161,7 @@
         changedIds.indexOf(String(safe[i].id)) >= 0 ||
         options.pushAllPresets
       ) {
-        if (!options.skipCloudPush) {
-          safe[i] = Object.assign({}, safe[i], { updatedAt: now });
-        } else if (!safe[i].updatedAt) {
-          safe[i] = Object.assign({}, safe[i], { updatedAt: now });
-        }
+        safe[i] = Object.assign({}, safe[i], { updatedAt: now });
       }
     }
     localStorage.setItem(STORAGE.PRESETS, JSON.stringify(safe));
@@ -1403,44 +1399,77 @@
   function bindMetaFormOnce() {
     if (!inputTournamentName || inputTournamentName.dataset.bound) return;
     inputTournamentName.dataset.bound = "1";
-    function pushMeta() {
+    var metaFsTimer = null;
+
+    /** 로컬 프리셋 updatedAt 갱신 + 타이머 상태 반영 (즉시) */
+    function applyMetaLocally() {
       syncMetaFromInputs();
-      mergeRemoteIntoActivePreset({ skipCloudPush: true });
-      pushRemoteLive();
+      var aid = getActivePresetId();
+      mergeRemoteIntoActivePreset({
+        skipCloudPush: true,
+        changedPresetIds: aid ? [aid] : null,
+      });
+      persistTimerSync({ userAction: true, urgentCloudPush: true });
+      if (MetisTimer.flushActivePresetMetadataToTimer) {
+        MetisTimer.flushActivePresetMetadataToTimer();
+      }
     }
+
+    /** Firestore 프리셋 문서에 즉시 저장 */
+    function pushMetaToFirestoreNow() {
+      syncMetaFromInputs();
+      var aid = getActivePresetId();
+      mergeRemoteIntoActivePreset({
+        urgent: true,
+        changedPresetIds: aid ? [aid] : null,
+      });
+      persistTimerSync({ userAction: true, urgentCloudPush: true });
+      if (MetisTimer.flushActivePresetMetadataToTimer) {
+        MetisTimer.flushActivePresetMetadataToTimer();
+      }
+    }
+
+    function scheduleMetaToFirestore() {
+      applyMetaLocally();
+      if (metaFsTimer) clearTimeout(metaFsTimer);
+      metaFsTimer = setTimeout(function () {
+        metaFsTimer = null;
+        pushMetaToFirestoreNow();
+      }, 180);
+    }
+
     function flushMeta() {
-      syncMetaFromInputs();
-      flushPresetSnapshot();
-      persistTimerSync({ userAction: true });
+      if (metaFsTimer) {
+        clearTimeout(metaFsTimer);
+        metaFsTimer = null;
+      }
+      pushMetaToFirestoreNow();
     }
-    inputTournamentName.addEventListener("input", pushMeta);
+
+    inputTournamentName.addEventListener("input", scheduleMetaToFirestore);
     inputTournamentName.addEventListener("change", flushMeta);
     inputTournamentName.addEventListener("blur", flushMeta);
     if (inputTotalPrize) {
-      inputTotalPrize.addEventListener("input", pushMeta);
+      inputTotalPrize.addEventListener("input", scheduleMetaToFirestore);
       inputTotalPrize.addEventListener("change", flushMeta);
       inputTotalPrize.addEventListener("blur", flushMeta);
     }
     if (inputTournamentInfo) {
-      inputTournamentInfo.addEventListener("input", pushMeta);
+      inputTournamentInfo.addEventListener("input", scheduleMetaToFirestore);
       inputTournamentInfo.addEventListener("change", flushMeta);
       inputTournamentInfo.addEventListener("blur", flushMeta);
     }
     function bindFontScaleInput(input, output) {
       if (!input) return;
       function pushFontScale() {
-        syncMetaFromInputs();
         if (output) output.textContent = input.value + "%";
         input.setAttribute("aria-valuenow", input.value);
-        mergeRemoteIntoActivePreset({ skipCloudPush: true });
-        pushRemoteLive();
+        scheduleMetaToFirestore();
       }
       function flushFontScale() {
-        syncMetaFromInputs();
         if (output) output.textContent = input.value + "%";
         input.setAttribute("aria-valuenow", input.value);
-        flushPresetSnapshot();
-        persistTimerSync({ userAction: true });
+        flushMeta();
       }
       input.addEventListener("input", pushFontScale);
       input.addEventListener("change", flushFontScale);
@@ -2424,6 +2453,8 @@
       if (result && result.changed) {
         renderPresets();
         if (screenRemote.classList.contains("is-active")) {
+          // Firestore 프리셋이 갱신되면 홈 화면 메타도 강제 재동기화
+          // (입력 중이면 fillMetaInputsFromRemoteState가 포커스 필드는 건드리지 않음)
           remoteState = getRemote();
           renderRemote();
         }
