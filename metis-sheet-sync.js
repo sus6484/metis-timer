@@ -8,7 +8,7 @@
   var CONFIG = {
     url: "https://script.google.com/macros/s/AKfycbwfALH6tDcW9Q4yQnh-_Re6rgyNAERtndqlVVYkbZYJv1g0PRSUMw939JE5-2wv6o5wsw/exec",
     token: "metis_secret_444444",
-    assetVersion: "20260719c",
+    assetVersion: "20260719e",
   };
 
   var CLOUD_PULL_RETRY_DELAYS_MS = [0, 600, 1500];
@@ -492,6 +492,12 @@
     options = options || {};
     var result = { applied: false, activePresetChanged: false };
 
+    // Firestore가 프리셋 SSOT이면 시트 프리셋 병합 스킵
+    if (global.MetisFirestoreSync && global.MetisFirestoreSync.isPresetsLive) {
+      syncDbg("PULL", "applyCloudPresetsIfNewer:Firestore프리셋우선스킵");
+      return result;
+    }
+
     if (data && Array.isArray(data.deletedPresetIds) && data.deletedPresetIds.length) {
       markPresetsDeletedLocally(data.deletedPresetIds);
     }
@@ -903,6 +909,16 @@
       syncDbg("PULL", "applyTimerStatesFromCloud:cloudSlice없음", {
         presetId: presetId,
         availableIds: Object.keys(timerStates),
+      });
+      return result;
+    }
+
+    // Firestore가 타이머 제어 SSOT이면 시트 timerStates 적용 스킵
+    var skipSheetTimerControl =
+      global.MetisFirestoreSync && global.MetisFirestoreSync.isTimerControlLive;
+    if (skipSheetTimerControl) {
+      syncDbg("PULL", "applyTimerStatesFromCloud:Firestore타이머우선스킵", {
+        presetId: presetId,
       });
       return result;
     }
@@ -1509,6 +1525,10 @@
 
   function savePresetsToCloud(presets, activePresetId, options) {
     options = options || {};
+    if (global.MetisFirestoreSync && global.MetisFirestoreSync.isPresetsLive) {
+      syncDbg("PUSH", "savePresetsToCloud:Firestore프리셋우선스킵");
+      return;
+    }
     var built = buildPresetsPushPayload(presets, {
       activePresetId: activePresetId,
       pushAllPresets: !!options.pushAllPresets,
@@ -1598,44 +1618,124 @@
         ? resolvePresetIdFn
         : resolveBootPresetId;
 
+    function continueBoot() {
+      window.__METIS_TIMER_PRESET_ID = resolveId();
+      return loadScript("timer-core.js")
+        .then(function () {
+          if (
+            global.MetisTimer &&
+            global.MetisTimer.syncAllPresetsMetadataFromStorage
+          ) {
+            global.MetisTimer.syncAllPresetsMetadataFromStorage();
+          }
+          ensureTimerStateBootstrapped();
+          if (
+            !(global.MetisFirestoreSync && global.MetisFirestoreSync.isTimerControlLive) &&
+            lastCloudPullData &&
+            lastCloudPullData.timerStates
+          ) {
+            var bootPresetId =
+              window.__METIS_TIMER_PRESET_ID != null
+                ? String(window.__METIS_TIMER_PRESET_ID)
+                : "";
+            if (bootPresetId) {
+              applyTimerStatesFromCloud(lastCloudPullData.timerStates, {
+                forcePresetId: bootPresetId,
+              });
+            }
+          }
+          if (
+            !(global.MetisFirestoreSync && global.MetisFirestoreSync.isTimerControlLive)
+          ) {
+            maybePushLocalTimerIfAheadOfCloud(lastCloudPullData);
+          }
+          return loadScript("metis-audio.js");
+        })
+        .then(function () {
+          window.__METIS_TIMER_BOOT_DONE = true;
+          window.dispatchEvent(new Event("metis-timer-boot-done"));
+        })
+        .catch(function (err) {
+          console.warn("[MetisSheetSync] 타이머 부팅 실패:", err);
+          window.__METIS_TIMER_PRESET_ID =
+            typeof resolveId === "function" ? resolveId() : "preset_default";
+          window.__METIS_TIMER_BOOT_DONE = true;
+          window.dispatchEvent(new Event("metis-timer-boot-done"));
+        });
+    }
+
+    function bootFromFirestorePresets() {
+      return new Promise(function (resolve) {
+        var done = false;
+        function finish() {
+          if (done) return;
+          done = true;
+          resolve();
+        }
+        function start() {
+          if (
+            !global.MetisFirestoreSync ||
+            !global.MetisFirestoreSync.startPresetsSync
+          ) {
+            finish();
+            return;
+          }
+          global.MetisFirestoreSync.startPresetsSync(function () {
+            finish();
+          });
+          if (global.MetisFirestoreSync.whenPresetsReady) {
+            global.MetisFirestoreSync.whenPresetsReady(finish);
+          }
+          setTimeout(finish, 8000);
+        }
+        if (global.MetisFirestoreSync) start();
+        else {
+          window.addEventListener("metis-firebase-ready", start, { once: true });
+          setTimeout(finish, 8000);
+        }
+      }).then(continueBoot);
+    }
+
+    if (global.MetisFirestoreSync && global.MetisFirestoreSync.isPresetsLive) {
+      return bootFromFirestorePresets();
+    }
+
+    // Firebase 모듈이 아직이면 잠시 대기 후 Firestore 경로 재시도
+    if (!global.MetisFirestoreSync) {
+      return new Promise(function (resolve) {
+        var finished = false;
+        function go(useFs) {
+          if (finished) return;
+          finished = true;
+          if (useFs) resolve(bootFromFirestorePresets());
+          else {
+            resolve(
+              pullPresetsToLocal({ retries: 3 })
+                .catch(function () {
+                  return null;
+                })
+                .then(continueBoot)
+            );
+          }
+        }
+        window.addEventListener(
+          "metis-firebase-ready",
+          function () {
+            go(!!(global.MetisFirestoreSync && global.MetisFirestoreSync.isPresetsLive));
+          },
+          { once: true }
+        );
+        setTimeout(function () {
+          go(!!(global.MetisFirestoreSync && global.MetisFirestoreSync.isPresetsLive));
+        }, 2500);
+      });
+    }
+
     return pullPresetsToLocal({ retries: 3 })
       .catch(function () {
         return null;
       })
-      .then(function () {
-        window.__METIS_TIMER_PRESET_ID = resolveId();
-        return loadScript("timer-core.js");
-      })
-      .then(function () {
-        if (global.MetisTimer && global.MetisTimer.syncAllPresetsMetadataFromStorage) {
-          global.MetisTimer.syncAllPresetsMetadataFromStorage();
-        }
-        ensureTimerStateBootstrapped();
-        if (lastCloudPullData && lastCloudPullData.timerStates) {
-          var bootPresetId =
-            window.__METIS_TIMER_PRESET_ID != null
-              ? String(window.__METIS_TIMER_PRESET_ID)
-              : "";
-          if (bootPresetId) {
-            applyTimerStatesFromCloud(lastCloudPullData.timerStates, {
-              forcePresetId: bootPresetId,
-            });
-          }
-        }
-        maybePushLocalTimerIfAheadOfCloud(lastCloudPullData);
-        return loadScript("metis-audio.js");
-      })
-      .then(function () {
-        window.__METIS_TIMER_BOOT_DONE = true;
-        window.dispatchEvent(new Event("metis-timer-boot-done"));
-      })
-      .catch(function (err) {
-        console.warn("[MetisSheetSync] 타이머 부팅 실패:", err);
-        window.__METIS_TIMER_PRESET_ID =
-          typeof resolveId === "function" ? resolveId() : "preset_default";
-        window.__METIS_TIMER_BOOT_DONE = true;
-        window.dispatchEvent(new Event("metis-timer-boot-done"));
-      });
+      .then(continueBoot);
   }
 
   global.MetisSheetSync = {

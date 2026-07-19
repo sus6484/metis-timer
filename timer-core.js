@@ -1310,7 +1310,7 @@
       var pushPresetId =
         syncPresetId ||
         (state.activePresetId != null ? String(state.activePresetId) : "");
-      // 바인 인원(player/entry) → Firestore 실시간 동기화
+      // 바인 인원(player/entry) → Firestore
       if (
         options.bumpStats &&
         pushPresetId &&
@@ -1323,17 +1323,48 @@
           statsUpdatedAt: state.statsUpdatedAt,
         });
       }
+      // 타이머 제어(재생/일시정지/시계) → Firestore (SSOT)
+      if (
+        pushPresetId &&
+        global.MetisFirestoreSync &&
+        global.MetisFirestoreSync.isTimerControlLive &&
+        typeof global.MetisFirestoreSync.saveTimerControl === "function"
+      ) {
+        var pushControl =
+          isUserSyncAction(options) ||
+          !!options.autoTick ||
+          !!options.cloudHeartbeat;
+        if (pushControl) {
+          var controlSlice =
+            options.cloudHeartbeat || options.autoTick
+              ? pickTimerHeartbeatSlice(state, pushPresetId)
+              : pickTimerSyncSlice(state, pushPresetId);
+          global.MetisFirestoreSync.saveTimerControl(pushPresetId, controlSlice, {
+            urgent: isUserSyncAction(options),
+            heartbeat: !!(options.cloudHeartbeat || options.autoTick),
+          });
+        }
+      }
       if (
         global.MetisSheetSync &&
-        typeof global.MetisSheetSync.saveTimerStateToCloud === "function"
+        typeof global.MetisSheetSync.saveTimerStateToCloud === "function" &&
+        !(
+          global.MetisFirestoreSync &&
+          global.MetisFirestoreSync.isTimerControlLive
+        )
       ) {
         if (pushPresetId) {
           var cloudSlice =
             options.cloudHeartbeat || options.autoTick
               ? pickTimerHeartbeatSlice(state, pushPresetId)
               : pickTimerSyncSlice(state, pushPresetId);
-          // 바인 인원은 Firestore가 담당 — 시트 페이로드에서 제외
+          // Firestore 담당 바인 필드는 시트에서 제외
           if (
+            global.MetisFirestoreSync &&
+            typeof global.MetisFirestoreSync.stripFirestoreOwnedFields === "function"
+          ) {
+            global.MetisFirestoreSync.stripFirestoreOwnedFields(cloudSlice);
+          } else if (
             global.MetisFirestoreSync &&
             global.MetisFirestoreSync.isBuyInLive
           ) {
@@ -1361,8 +1392,12 @@
           });
         }
       } else {
-        syncDbg("PUSH", "writeSyncState:시트푸시스킵", {
+        syncDbg("PUSH", "writeSyncState:시트타이머푸시스킵", {
           hasMetisSheetSync: !!global.MetisSheetSync,
+          firestoreTimerLive: !!(
+            global.MetisFirestoreSync &&
+            global.MetisFirestoreSync.isTimerControlLive
+          ),
           stats: statsSnippet(state),
         });
       }

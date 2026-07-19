@@ -143,8 +143,53 @@
     if (window.MetisSheetSync && MetisSheetSync.filterOutDeletedPresets) {
       safe = MetisSheetSync.filterOutDeletedPresets(safe);
     }
+    if (
+      window.MetisFirestoreSync &&
+      MetisFirestoreSync.filterDeletedPresetsFs
+    ) {
+      safe = MetisFirestoreSync.filterDeletedPresetsFs(safe);
+    }
+    // Firestore 동기화용 updatedAt 부여
+    var now = Date.now();
+    var changedIds = options.changedPresetIds
+      ? options.changedPresetIds.map(String)
+      : null;
+    for (var i = 0; i < safe.length; i++) {
+      if (!safe[i] || !safe[i].id) continue;
+      if (
+        !changedIds ||
+        changedIds.indexOf(String(safe[i].id)) >= 0 ||
+        options.pushAllPresets
+      ) {
+        if (!options.skipCloudPush) {
+          safe[i] = Object.assign({}, safe[i], { updatedAt: now });
+        } else if (!safe[i].updatedAt) {
+          safe[i] = Object.assign({}, safe[i], { updatedAt: now });
+        }
+      }
+    }
     localStorage.setItem(STORAGE.PRESETS, JSON.stringify(safe));
-    if (!options.skipCloudPush && window.MetisSheetSync) {
+
+    if (options.skipCloudPush) return;
+
+    if (
+      window.MetisFirestoreSync &&
+      MetisFirestoreSync.isPresetsLive &&
+      MetisFirestoreSync.savePresetsToFirestore
+    ) {
+      var toPush = safe;
+      if (changedIds && changedIds.length && !options.pushAllPresets) {
+        toPush = safe.filter(function (p) {
+          return p && changedIds.indexOf(String(p.id)) >= 0;
+        });
+      }
+      MetisFirestoreSync.savePresetsToFirestore(toPush, {
+        urgent: !!options.urgent,
+      });
+      return;
+    }
+
+    if (window.MetisSheetSync) {
       MetisSheetSync.savePresetsToCloud(safe, getActivePresetId(), {
         changedPresetIds: options.changedPresetIds || null,
         deletedPresetIds: options.deletedPresetIds || null,
@@ -337,7 +382,9 @@
         updated[k] = remoteState[k];
       }
     }
-    savePresets(replacePresetById(list, aid, updated), options);
+    savePresets(replacePresetById(list, aid, updated), Object.assign({}, options, {
+      changedPresetIds: options.changedPresetIds || [aid],
+    }));
   }
 
   function tournamentSliceFromRemote() {
@@ -575,13 +622,11 @@
   function applyImportedPreset(preset) {
     var list = getPresets().slice();
     list.push(preset);
-    savePresets(list, { skipCloudPush: true });
-    if (window.MetisSheetSync) {
-      MetisSheetSync.savePresetsToCloud(list, preset.id, {
-        changedPresetIds: [preset.id],
-        urgent: true,
-      });
-    }
+    savePresets(list, {
+      skipCloudPush: false,
+      changedPresetIds: [preset.id],
+      urgent: true,
+    });
     renderPresets();
     activatePreset(preset.id).then(function () {
       alert('프리셋 "' + preset.name + '" 을(를) 가져왔습니다.');
@@ -621,7 +666,9 @@
     if (window.MetisSheetSync && MetisSheetSync.updateCloudPollPinnedPreset) {
       MetisSheetSync.updateCloudPollPinnedPreset(id);
     }
-    if (window.MetisFirestoreSync && MetisFirestoreSync.updateBuyInPreset) {
+    if (window.MetisFirestoreSync && MetisFirestoreSync.updateLivePreset) {
+      MetisFirestoreSync.updateLivePreset(id);
+    } else if (window.MetisFirestoreSync && MetisFirestoreSync.updateBuyInPreset) {
       MetisFirestoreSync.updateBuyInPreset(id);
     }
   }
@@ -631,11 +678,25 @@
     mergeRemoteIntoActivePreset();
     var prevId = getActivePresetId();
     setActivePresetId(id);
-    if (prevId && prevId !== id && window.MetisSheetSync) {
-      MetisSheetSync.savePresetsToCloud(getPresets(), prevId, {
-        changedPresetIds: [prevId],
-        urgent: true,
-      });
+    if (prevId && prevId !== id) {
+      if (
+        window.MetisFirestoreSync &&
+        MetisFirestoreSync.isPresetsLive &&
+        MetisFirestoreSync.savePresetsToFirestore
+      ) {
+        var prevPreset = findPresetByIdLocal(getPresets(), prevId);
+        if (prevPreset) {
+          MetisFirestoreSync.savePresetsToFirestore(
+            [Object.assign({}, prevPreset, { updatedAt: Date.now() })],
+            { urgent: true }
+          );
+        }
+      } else if (window.MetisSheetSync) {
+        MetisSheetSync.savePresetsToCloud(getPresets(), prevId, {
+          changedPresetIds: [prevId],
+          urgent: true,
+        });
+      }
     }
     if (presetSelect) presetSelect.value = id;
     renderPresets();
@@ -643,7 +704,9 @@
       MetisTimer.applyActivePresetMetadataOnSwitch(id);
     }
     var pull =
-      window.MetisSheetSync && MetisSheetSync.pullAndApplyPresetTimerState
+      window.MetisSheetSync &&
+      MetisSheetSync.pullAndApplyPresetTimerState &&
+      !(window.MetisFirestoreSync && MetisFirestoreSync.isTimerControlLive)
         ? MetisSheetSync.pullAndApplyPresetTimerState(id)
         : Promise.resolve();
     return pull.then(function () {
@@ -677,7 +740,19 @@
     });
     var wasActive = String(getActivePresetId()) === pid;
 
-    if (window.MetisSheetSync && MetisSheetSync.deletePresetsByIds) {
+    localStorage.setItem(STORAGE.PRESETS, JSON.stringify(next));
+    try {
+      localStorage.removeItem("timer_state_" + pid);
+      localStorage.removeItem("metis_timer_window_alive_" + pid);
+    } catch (e0) {}
+
+    if (
+      window.MetisFirestoreSync &&
+      MetisFirestoreSync.isPresetsLive &&
+      MetisFirestoreSync.deletePresetsFromFirestore
+    ) {
+      MetisFirestoreSync.deletePresetsFromFirestore([pid], { urgent: true });
+    } else if (window.MetisSheetSync && MetisSheetSync.deletePresetsByIds) {
       MetisSheetSync.deletePresetsByIds([pid], next, { urgent: true });
     } else {
       savePresets(next, {
@@ -685,9 +760,6 @@
         deletedPresetIds: [pid],
         urgent: true,
       });
-      try {
-        localStorage.removeItem("timer_state_" + pid);
-      } catch (e0) {}
     }
 
     if (wasActive) setActivePresetId("");
@@ -964,9 +1036,19 @@
     var pid = getActivePresetId();
     if (!pid) return;
     firestoreBuyInStarted = true;
-    console.log("[MetisFirestore|PULL|app:startBuyInSync]", { presetId: pid });
-    MetisFirestoreSync.startBuyInSync(pid, function () {
+    console.log("[MetisFirestore|PULL|app:startLiveSync]", { presetId: pid });
+    var startFn =
+      MetisFirestoreSync.startLiveSync || MetisFirestoreSync.startBuyInSync;
+    startFn.call(MetisFirestoreSync, pid, function (info) {
       refreshRemoteFromBuyIn();
+      if (
+        info &&
+        info.source === "timerControl" &&
+        info.result &&
+        info.result.leveledUp
+      ) {
+        // 레벨업 시 리모컨 UI만 갱신 (사운드는 타이머 화면에서 처리)
+      }
     });
   }
 
@@ -2069,13 +2151,11 @@
         ),
       ]);
     }
-    savePresets(list, { skipCloudPush: true });
-    if (savedPresetId && window.MetisSheetSync) {
-      MetisSheetSync.savePresetsToCloud(list, savedPresetId, {
-        changedPresetIds: [savedPresetId],
-        urgent: true,
-      });
-    }
+    savePresets(list, {
+      skipCloudPush: false,
+      changedPresetIds: savedPresetId ? [savedPresetId] : null,
+      urgent: true,
+    });
     closeModal();
     renderPresets();
     mergeRemoteIntoActivePreset({ skipCloudPush: true });
@@ -2333,9 +2413,51 @@
     }
   }
 
-  if (window.MetisSheetSync) {
-    MetisSheetSync.pullPresetsToLocal().finally(startAppAfterCloudSync);
+  function bootWithFirestorePresets() {
+    var started = false;
+    function finish() {
+      if (started) return;
+      started = true;
+      startAppAfterCloudSync();
+    }
+    MetisFirestoreSync.startPresetsSync(function (result) {
+      if (result && result.changed) {
+        renderPresets();
+        if (screenRemote.classList.contains("is-active")) {
+          remoteState = getRemote();
+          renderRemote();
+        }
+      }
+      finish();
+    });
+    MetisFirestoreSync.whenPresetsReady(finish);
+    // 안전장치: 리스너가 너무 오래 걸리면 로컬로 시작
+    setTimeout(finish, 8000);
+  }
+
+  function bootApp() {
+    if (
+      window.MetisFirestoreSync &&
+      MetisFirestoreSync.isPresetsLive &&
+      MetisFirestoreSync.startPresetsSync
+    ) {
+      bootWithFirestorePresets();
+      return;
+    }
+    if (window.MetisSheetSync) {
+      MetisSheetSync.pullPresetsToLocal().finally(startAppAfterCloudSync);
+    } else {
+      startAppAfterCloudSync();
+    }
+  }
+
+  if (window.MetisFirestoreSync) {
+    bootApp();
   } else {
-    startAppAfterCloudSync();
+    window.addEventListener("metis-firebase-ready", bootApp, { once: true });
+    // Firebase 모듈이 없는 환경 대비
+    setTimeout(function () {
+      if (!window.MetisFirestoreSync) bootApp();
+    }, 3000);
   }
 })();

@@ -881,10 +881,10 @@
       </div>
     </div>
 
-    <script>window.__METIS_ASSET_V = "20260719c";</script>
-    <script type="module" src="firebase.js?v=20260719c"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260719c"></script>
-    <script src="metis-sheet-sync.js?v=20260719c"></script>
+    <script>window.__METIS_ASSET_V = "20260719e";</script>
+    <script type="module" src="firebase.js?v=20260719e"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260719e"></script>
+    <script src="metis-sheet-sync.js?v=20260719e"></script>
     <script>
       (function () {
         MetisSheetSync.bootTimerPage(function () {
@@ -2182,11 +2182,24 @@
             ? MetisTimer.getSyncPresetId()
             : window.__METIS_TIMER_PRESET_ID || "";
           if (!buyInPid) return;
-          console.log("[MetisFirestore|PULL|timer.html:startBuyInSync]", {
+          console.log("[MetisFirestore|PULL|timer.html:startLiveSync]", {
             presetId: buyInPid,
           });
-          MetisFirestoreSync.startBuyInSync(buyInPid, function () {
+          var startFn =
+            MetisFirestoreSync.startLiveSync || MetisFirestoreSync.startBuyInSync;
+          startFn.call(MetisFirestoreSync, buyInPid, function (info) {
             refreshFromBroadcast();
+            if (
+              info &&
+              info.source === "timerControl" &&
+              info.result &&
+              info.result.leveledUp
+            ) {
+              suppressSkipCreditOnce = true;
+              resetTransitionCues();
+              playTransitionDoorong();
+              prevLevelSecExact = null;
+            }
             tick();
           });
         }
@@ -2217,8 +2230,12 @@
           if (window.MetisSheetSync && MetisSheetSync.stopCloudTimerSync) {
             MetisSheetSync.stopCloudTimerSync();
           }
-          if (window.MetisFirestoreSync && MetisFirestoreSync.stopBuyInSync) {
-            MetisFirestoreSync.stopBuyInSync();
+          if (window.MetisFirestoreSync) {
+            if (MetisFirestoreSync.stopAllLiveSync) {
+              MetisFirestoreSync.stopAllLiveSync();
+            } else if (MetisFirestoreSync.stopBuyInSync) {
+              MetisFirestoreSync.stopBuyInSync();
+            }
           }
         });
 
