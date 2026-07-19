@@ -176,10 +176,10 @@
       var arr = JSON.parse(raw);
       var list = Array.isArray(arr) ? arr : [];
       if (
-        global.MetisSheetSync &&
-        typeof global.MetisSheetSync.filterOutDeletedPresets === "function"
+        global.MetisFirestoreSync &&
+        typeof global.MetisFirestoreSync.filterDeletedPresetsFs === "function"
       ) {
-        return global.MetisSheetSync.filterOutDeletedPresets(list);
+        return global.MetisFirestoreSync.filterDeletedPresetsFs(list);
       }
       return list;
     } catch (e) {
@@ -191,10 +191,10 @@
     try {
       var list = Array.isArray(presets) ? presets.slice() : [];
       if (
-        global.MetisSheetSync &&
-        typeof global.MetisSheetSync.filterOutDeletedPresets === "function"
+        global.MetisFirestoreSync &&
+        typeof global.MetisFirestoreSync.filterDeletedPresetsFs === "function"
       ) {
-        list = global.MetisSheetSync.filterOutDeletedPresets(list);
+        list = global.MetisFirestoreSync.filterDeletedPresetsFs(list);
       }
       localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(list));
     } catch (e) {}
@@ -1344,56 +1344,9 @@
             heartbeat: !!(options.cloudHeartbeat || options.autoTick),
           });
         }
-      }
-      if (
-        global.MetisSheetSync &&
-        typeof global.MetisSheetSync.saveTimerStateToCloud === "function" &&
-        !(
-          global.MetisFirestoreSync &&
-          global.MetisFirestoreSync.isTimerControlLive
-        )
-      ) {
-        if (pushPresetId) {
-          var cloudSlice =
-            options.cloudHeartbeat || options.autoTick
-              ? pickTimerHeartbeatSlice(state, pushPresetId)
-              : pickTimerSyncSlice(state, pushPresetId);
-          // Firestore 담당 바인 필드는 시트에서 제외
-          if (
-            global.MetisFirestoreSync &&
-            typeof global.MetisFirestoreSync.stripFirestoreOwnedFields === "function"
-          ) {
-            global.MetisFirestoreSync.stripFirestoreOwnedFields(cloudSlice);
-          } else if (
-            global.MetisFirestoreSync &&
-            global.MetisFirestoreSync.isBuyInLive
-          ) {
-            delete cloudSlice.player;
-            delete cloudSlice.entry;
-            delete cloudSlice.statsUpdatedAt;
-          }
-          syncDbg("PUSH", "writeSyncState:클라우드푸시호출", {
-            pushPresetId: pushPresetId,
-            userAction: isUserSyncAction(options),
-            autoTick: !!options.autoTick,
-            bumpStats: !!options.bumpStats,
-            cloudHeartbeat: !!options.cloudHeartbeat,
-            urgentCloudPush: !!options.urgentCloudPush,
-            skipCloudPush: !!options.skipCloudPush,
-            slice: statsSnippet(cloudSlice),
-          });
-          global.MetisSheetSync.saveTimerStateToCloud(pushPresetId, cloudSlice, {
-            urgent: !!options.urgentCloudPush,
-          });
-        } else {
-          syncDbg("PUSH", "writeSyncState:pushPresetId없음", {
-            syncPresetId: syncPresetId,
-            activePresetId: state.activePresetId,
-          });
-        }
       } else {
-        syncDbg("PUSH", "writeSyncState:시트타이머푸시스킵", {
-          hasMetisSheetSync: !!global.MetisSheetSync,
+        syncDbg("PUSH", "writeSyncState:Firestore타이머푸시스킵", {
+          pushPresetId: pushPresetId,
           firestoreTimerLive: !!(
             global.MetisFirestoreSync &&
             global.MetisFirestoreSync.isTimerControlLive
@@ -1404,7 +1357,6 @@
     } else {
       syncDbg("PUSH", "writeSyncState:클라우드푸시스킵", {
         skipCloudPush: !!options.skipCloudPush,
-        hasMetisSheetSync: !!global.MetisSheetSync,
         stats: statsSnippet(state),
       });
     }

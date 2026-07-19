@@ -4,8 +4,9 @@
  * 컬렉션
  * - timerBuyIn/{presetId}     : 바인 인원 (player / entry)
  * - timerControl/{presetId}   : 타이머 재생·일시정지·시계 (Firestore = SSOT, LWW)
+ * - presets/{presetId}        : 프리셋 목록
  *
- * 시트 폴링은 이후 단계에서 제거. 지금은 Firestore가 충돌 시 우선한다.
+ * Google Sheets 폴링은 사용하지 않음. 동기화는 Firestore + 로컬 상태만.
  */
 import { db } from "./firebase.js";
 import {
@@ -573,9 +574,6 @@ function markPresetsDeletedFs(ids) {
     map[pid] = now;
   }
   saveFsDeletedMap(map);
-  if (window.MetisSheetSync && MetisSheetSync.markPresetsDeletedLocally) {
-    MetisSheetSync.markPresetsDeletedLocally(ids);
-  }
 }
 
 function clearPresetsDeletedFs(ids) {
@@ -589,9 +587,6 @@ function clearPresetsDeletedFs(ids) {
     changed = true;
   }
   if (changed) saveFsDeletedMap(map);
-  if (window.MetisSheetSync && MetisSheetSync.clearDeletedPresetTombstones) {
-    MetisSheetSync.clearDeletedPresetTombstones(ids);
-  }
 }
 
 function filterDeletedPresetsFs(list) {
@@ -605,19 +600,6 @@ function filterDeletedPresetsFs(list) {
     }
     return true;
   });
-  if (
-    window.MetisSheetSync &&
-    typeof MetisSheetSync.filterOutDeletedPresets === "function" &&
-    !isPresetsLive
-  ) {
-    list = MetisSheetSync.filterOutDeletedPresets(list);
-  } else if (
-    window.MetisSheetSync &&
-    typeof MetisSheetSync.filterOutDeletedPresets === "function"
-  ) {
-    // Firestore 모드에서도 동일 톰스톤 키를 쓰므로 함께 적용
-    list = MetisSheetSync.filterOutDeletedPresets(list);
-  }
   if (!Object.keys(map).length) return list.slice();
   return list.filter(function (p) {
     return p && p.id && !Object.prototype.hasOwnProperty.call(map, String(p.id));
@@ -1041,6 +1023,153 @@ function stopAllLiveSync() {
   stopPresetsSync();
 }
 
+function assetUrl(path) {
+  var v =
+    (typeof window !== "undefined" &&
+      window.__METIS_ASSET_V != null &&
+      String(window.__METIS_ASSET_V)) ||
+    "1";
+  if (!path || path.indexOf("?") >= 0) return path;
+  return path + "?v=" + encodeURIComponent(v);
+}
+
+function loadScript(src) {
+  return new Promise(function (resolve, reject) {
+    var s = document.createElement("script");
+    s.src = assetUrl(src);
+    s.async = false;
+    s.onload = function () {
+      resolve();
+    };
+    s.onerror = function () {
+      reject(new Error("script load failed: " + src));
+    };
+    document.body.appendChild(s);
+  });
+}
+
+function findPresetByIdLocal(list, id) {
+  if (!id || !Array.isArray(list)) return null;
+  var sid = String(id);
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && String(list[i].id) === sid) return list[i];
+  }
+  return null;
+}
+
+function loadLocalPresetsList() {
+  try {
+    var raw = localStorage.getItem(PRESETS_STORAGE_KEY);
+    if (!raw) return [];
+    var arr = JSON.parse(raw);
+    return filterDeletedPresetsFs(Array.isArray(arr) ? arr : []);
+  } catch (e0) {
+    return [];
+  }
+}
+
+/** timer.html 부팅: URL id → 로컬 프리셋 → fallback */
+function resolveBootPresetId() {
+  var urlId = null;
+  try {
+    if (typeof location !== "undefined" && location.search) {
+      urlId = new URLSearchParams(location.search).get("id");
+    }
+  } catch (e0) {}
+
+  var list = loadLocalPresetsList();
+  if (urlId && findPresetByIdLocal(list, urlId)) return String(urlId);
+
+  if (list.length) {
+    var aid = "";
+    try {
+      aid = localStorage.getItem("metis_activePresetId") || "";
+    } catch (e1) {}
+    if (aid && findPresetByIdLocal(list, aid)) return String(aid);
+    return String(list[0].id);
+  }
+
+  return urlId || "preset_default";
+}
+
+function ensureTimerStateBootstrapped() {
+  if (!window.MetisTimer || !window.MetisTimer.readSyncState) return false;
+
+  var presetId =
+    window.__METIS_TIMER_PRESET_ID != null && window.__METIS_TIMER_PRESET_ID !== ""
+      ? String(window.__METIS_TIMER_PRESET_ID)
+      : resolveBootPresetId();
+  if (!presetId) return false;
+
+  window.MetisTimer.setSyncPresetId(presetId);
+  var state = window.MetisTimer.readSyncState();
+  if (!state) return false;
+
+  if (typeof document !== "undefined") {
+    try {
+      document.dispatchEvent(new Event("metis-presets-bootstrapped"));
+    } catch (e1) {}
+  }
+  return true;
+}
+
+/**
+ * timer.html: Firestore 프리셋 sync → preset id 결정 → timer-core/metis-audio 로드
+ */
+function bootTimerPage(resolvePresetIdFn) {
+  var resolveId =
+    typeof resolvePresetIdFn === "function"
+      ? resolvePresetIdFn
+      : resolveBootPresetId;
+
+  function continueBoot() {
+    window.__METIS_TIMER_PRESET_ID = resolveId();
+    return loadScript("timer-core.js")
+      .then(function () {
+        if (
+          window.MetisTimer &&
+          window.MetisTimer.syncAllPresetsMetadataFromStorage
+        ) {
+          window.MetisTimer.syncAllPresetsMetadataFromStorage();
+        }
+        ensureTimerStateBootstrapped();
+        return loadScript("metis-audio.js");
+      })
+      .then(function () {
+        window.__METIS_TIMER_BOOT_DONE = true;
+        window.dispatchEvent(new Event("metis-timer-boot-done"));
+      })
+      .catch(function (err) {
+        console.warn("[MetisFirestore] 타이머 부팅 실패:", err);
+        window.__METIS_TIMER_PRESET_ID =
+          typeof resolveId === "function" ? resolveId() : "preset_default";
+        window.__METIS_TIMER_BOOT_DONE = true;
+        window.dispatchEvent(new Event("metis-timer-boot-done"));
+      });
+  }
+
+  function waitPresetsThenBoot() {
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        resolve();
+      }
+      startPresetsSync(function () {
+        finish();
+      });
+      whenPresetsReady(finish);
+      setTimeout(finish, 8000);
+    }).then(continueBoot);
+  }
+
+  if (isPresetsLive) {
+    return waitPresetsThenBoot();
+  }
+  return continueBoot();
+}
+
 window.MetisFirestoreSync = {
   isBuyInLive: isBuyInLive,
   isTimerControlLive: isTimerControlLive,
@@ -1067,6 +1196,10 @@ window.MetisFirestoreSync = {
   normalizePresetForFs: normalizePresetForFs,
   whenPresetsReady: whenPresetsReady,
   filterDeletedPresetsFs: filterDeletedPresetsFs,
+  clearPresetsDeletedFs: clearPresetsDeletedFs,
+  resolveBootPresetId: resolveBootPresetId,
+  ensureTimerStateBootstrapped: ensureTimerStateBootstrapped,
+  bootTimerPage: bootTimerPage,
 };
 
 window.dispatchEvent(new Event("metis-firebase-ready"));

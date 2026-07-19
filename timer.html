@@ -881,15 +881,26 @@
       </div>
     </div>
 
-    <script>window.__METIS_ASSET_V = "20260719h";</script>
-    <script type="module" src="firebase.js?v=20260719h"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260719h"></script>
-    <script src="metis-sheet-sync.js?v=20260719h"></script>
+    <script>window.__METIS_ASSET_V = "20260719i";</script>
+    <script type="module" src="firebase.js?v=20260719i"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260719i"></script>
     <script>
       (function () {
-        MetisSheetSync.bootTimerPage(function () {
-          return MetisSheetSync.resolveBootPresetId();
-        });
+        function startBoot() {
+          if (!window.MetisFirestoreSync || !MetisFirestoreSync.bootTimerPage) {
+            console.warn("[Metis] Firestore boot 준비 안 됨");
+            return;
+          }
+          MetisFirestoreSync.bootTimerPage(function () {
+            return MetisFirestoreSync.resolveBootPresetId();
+          });
+        }
+        if (window.MetisFirestoreSync) startBoot();
+        else {
+          window.addEventListener("metis-firebase-ready", startBoot, {
+            once: true,
+          });
+        }
       })();
     </script>
     <script>
@@ -2145,37 +2156,6 @@
         window.addEventListener("storage", refreshFromBroadcast);
         window.addEventListener("metis-presets-bootstrapped", refreshFromBroadcast);
 
-        if (window.MetisSheetSync && MetisSheetSync.startCloudTimerSync) {
-          var pinnedPresetId = MetisTimer.getSyncPresetId
-            ? MetisTimer.getSyncPresetId()
-            : window.__METIS_TIMER_PRESET_ID || "";
-          MetisSheetSync.startCloudTimerSync(
-            function (result) {
-              var ar =
-                result && result.applyResult
-                  ? result.applyResult
-                  : { leveledUp: false, activePresetChanged: false };
-              console.log("[MetisSync|PULL|timer.html:cloudPoll콜백]", {
-                applied: result && result.applied,
-                presetsApplied: result && result.presetsApplied,
-                applyResult: ar,
-              });
-              refreshFromBroadcast();
-              if (ar.leveledUp) {
-                suppressSkipCreditOnce = true;
-                resetTransitionCues();
-                playTransitionDoorong();
-                prevLevelSecExact = null;
-              }
-              tick();
-            },
-            pinnedPresetId ? { pinnedPresetId: pinnedPresetId } : null
-          );
-        }
-        if (window.MetisSheetSync && MetisSheetSync.bindCloudSyncBadge) {
-          MetisSheetSync.bindCloudSyncBadge("cloud-sync-badge");
-        }
-
         function startFirestoreBuyInOnTimer() {
           if (!window.MetisFirestoreSync) return;
           var buyInPid = MetisTimer.getSyncPresetId
@@ -2227,9 +2207,6 @@
         window.addEventListener("pagehide", function () {
           clearHb();
           clearLeftCarousel();
-          if (window.MetisSheetSync && MetisSheetSync.stopCloudTimerSync) {
-            MetisSheetSync.stopCloudTimerSync();
-          }
           if (window.MetisFirestoreSync) {
             if (MetisFirestoreSync.stopAllLiveSync) {
               MetisFirestoreSync.stopAllLiveSync();
