@@ -881,9 +881,9 @@
       </div>
     </div>
 
-    <script>window.__METIS_ASSET_V = "20260719i";</script>
-    <script type="module" src="firebase.js?v=20260719i"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260719i"></script>
+    <script>window.__METIS_ASSET_V = "20260719j";</script>
+    <script type="module" src="firebase.js?v=20260719j"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260719j"></script>
     <script>
       (function () {
         function startBoot() {
@@ -1815,6 +1815,19 @@
           var rem = MetisTimer.remainingSec(s, now);
           renderView({ state: s, rem: rem, now: now });
         }
+
+        // Firestore applyTimerControl 직후 UI 강제 갱신
+        window.addEventListener("metis-timer-control-applied", function (ev) {
+          refreshFromBroadcast();
+          var detail = ev && ev.detail ? ev.detail : null;
+          if (detail && detail.leveledUp) {
+            suppressSkipCreditOnce = true;
+            resetTransitionCues();
+            playTransitionDoorong();
+            prevLevelSecExact = null;
+          }
+          tick();
+        });
 
         function togglePauseResume() {
           var s = MetisTimer.readSyncState();

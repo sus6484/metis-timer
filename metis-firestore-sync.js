@@ -284,6 +284,22 @@ function applyBuyInToLocal(presetId, raw) {
   return true;
 }
 
+function notifyTimerControlUi(detail) {
+  try {
+    window.dispatchEvent(
+      new CustomEvent("metis-timer-control-applied", {
+        detail: detail || {},
+      })
+    );
+  } catch (e0) {}
+  if (
+    window.MetisTimer &&
+    typeof MetisTimer.notifyLocalSyncListeners === "function"
+  ) {
+    MetisTimer.notifyLocalSyncListeners();
+  }
+}
+
 /**
  * Firestore timerControl → 로컬 적용 (Firestore LWW)
  * 로컬 lastActionTimestamp 가 더 크면(방금 조작) echo 대기만 하고 무시
@@ -338,6 +354,16 @@ function applyTimerControlToLocal(presetId, raw) {
 
   var newLevel =
     state.timer && state.timer.levelIndex != null ? state.timer.levelIndex : 0;
+  var result = {
+    changed: true,
+    leveledUp: newLevel > prevLevel,
+    prevLevelIndex: prevLevel,
+    newLevelIndex: newLevel,
+    presetId: pid,
+    timerStatus: state.timerStatus,
+    displayTime: state.displayTime,
+    hasStartedOnce: !!state.hasStartedOnce,
+  };
   console.log("[MetisFirestore|PULL|applyTimerControl:적용]", {
     presetId: pid,
     remoteLA: remoteLA,
@@ -345,16 +371,14 @@ function applyTimerControlToLocal(presetId, raw) {
     isRunning: state.timer && state.timer.isRunning,
     endAt: state.timer && state.timer.endAt,
     levelIndex: newLevel,
-    leveledUp: newLevel > prevLevel,
+    leveledUp: result.leveledUp,
     timerStatus: state.timerStatus,
   });
 
-  return {
-    changed: true,
-    leveledUp: newLevel > prevLevel,
-    prevLevelIndex: prevLevel,
-    newLevelIndex: newLevel,
-  };
+  // 로컬 저장 직후 타이머/리모컨 UI를 강제 갱신 (시트 폴링 콜백 대체)
+  notifyTimerControlUi(result);
+
+  return result;
 }
 
 function stopBuyInSync() {

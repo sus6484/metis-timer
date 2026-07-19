@@ -1071,11 +1071,16 @@
     lastRemoteSeenUpdated = Math.max(
       lastRemoteSeenUpdated,
       s.updatedAt || 0,
-      s.statsUpdatedAt || 0
+      s.statsUpdatedAt || 0,
+      s.lastActionTimestamp || 0
     );
     remoteState = getRemote();
     if (screenRemote.classList.contains("is-active")) renderRemote();
   }
+
+  window.addEventListener("metis-timer-control-applied", function () {
+    refreshRemoteFromBuyIn();
+  });
 
   function startFirestoreBuyInSyncIfNeeded() {
     if (!window.MetisFirestoreSync) return;

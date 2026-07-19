@@ -18,6 +18,15 @@
   var sessionUserActionSeen = false;
 
   var bc = null;
+  var localSyncListeners = [];
+
+  function notifyLocalSyncListeners() {
+    for (var i = 0; i < localSyncListeners.length; i++) {
+      try {
+        localSyncListeners[i]();
+      } catch (e0) {}
+    }
+  }
 
   function syncPageTag() {
     try {
@@ -1306,6 +1315,8 @@
         bc.postMessage({ type: "sync", t: state.updatedAt });
       } catch (e) {}
     }
+    // BroadcastChannel은 송신 탭에는 전달되지 않음 — 같은 탭 UI도 즉시 갱신
+    notifyLocalSyncListeners();
     if (!options.skipCloudPush) {
       var pushPresetId =
         syncPresetId ||
@@ -1759,13 +1770,19 @@
   }
 
   function subscribeSync(cb) {
-    if (!bc) return function () {};
-    var fn = function (ev) {
-      if (ev && ev.data && ev.data.type === "sync") cb();
-    };
-    bc.addEventListener("message", fn);
+    if (typeof cb !== "function") return function () {};
+    localSyncListeners.push(cb);
+    var fn = null;
+    if (bc) {
+      fn = function (ev) {
+        if (ev && ev.data && ev.data.type === "sync") cb();
+      };
+      bc.addEventListener("message", fn);
+    }
     return function () {
-      bc.removeEventListener("message", fn);
+      var idx = localSyncListeners.indexOf(cb);
+      if (idx >= 0) localSyncListeners.splice(idx, 1);
+      if (bc && fn) bc.removeEventListener("message", fn);
     };
   }
 
@@ -1890,6 +1907,7 @@
     touchTimerWindowHeartbeat: touchTimerWindowHeartbeat,
     playLevelBeep: playLevelBeep,
     subscribeSync: subscribeSync,
+    notifyLocalSyncListeners: notifyLocalSyncListeners,
     syncLevelField: syncLevelField,
     normalizeTimer: normalizeTimer,
     getTotalSeconds: getTotalSeconds,
