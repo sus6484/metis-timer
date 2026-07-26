@@ -793,7 +793,23 @@ function normalizePresetForFs(preset) {
     tournamentInfo:
       preset.tournamentInfo != null ? String(preset.tournamentInfo) : "",
     prizeText: preset.prizeText != null ? String(preset.prizeText) : "",
-    prizeItems: Array.isArray(preset.prizeItems) ? preset.prizeItems : [],
+    prizeItems: Array.isArray(preset.prizeItems)
+      ? preset.prizeItems
+          .map(function (item) {
+            if (!item || typeof item !== "object") return null;
+            var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
+            var amount = "";
+            if (typeof item.amount === "number") {
+              if (!Number.isFinite(item.amount) || item.amount <= 0) return null;
+              amount = String(Math.floor(item.amount));
+            } else {
+              amount = String(item.amount != null ? item.amount : "").trim().slice(0, 48);
+            }
+            if (!rank || !amount) return null;
+            return { rank: rank, amount: amount };
+          })
+          .filter(Boolean)
+      : [],
     entryChips: Math.max(0, Math.floor(Number(preset.entryChips) || 0)),
     regCloseLevel: Math.max(0, Math.floor(Number(preset.regCloseLevel) || 0)),
     infoFontScale: Number(preset.infoFontScale) || 1,

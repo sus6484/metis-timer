@@ -951,9 +951,19 @@
             .replace(/'/g, "&#39;");
         }
 
-        function formatPrizeAmount(n) {
-          var value = Math.max(0, Math.floor(Number(n) || 0));
-          return value.toLocaleString("ko-KR");
+        function formatPrizeAmount(amount) {
+          if (amount == null) return "";
+          if (typeof amount === "number") {
+            if (!Number.isFinite(amount) || amount <= 0) return "";
+            return Math.floor(amount).toLocaleString("ko-KR");
+          }
+          var raw = String(amount).trim();
+          if (!raw) return "";
+          if (/^[\d,]+$/.test(raw)) {
+            var n = Number(raw.replace(/,/g, ""));
+            if (Number.isFinite(n) && n > 0) return Math.floor(n).toLocaleString("ko-KR");
+          }
+          return raw;
         }
 
         function normalizePrizeItems(s) {
@@ -962,7 +972,13 @@
             .map(function (item) {
               if (!item || typeof item !== "object") return null;
               var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
-              var amount = Math.max(0, Math.floor(Number(item.amount) || 0));
+              var amount = "";
+              if (typeof item.amount === "number") {
+                if (!Number.isFinite(item.amount) || item.amount <= 0) return null;
+                amount = String(Math.floor(item.amount));
+              } else {
+                amount = String(item.amount != null ? item.amount : "").trim();
+              }
               if (!rank || !amount) return null;
               return { rank: rank, amount: amount };
             })
@@ -983,7 +999,7 @@
                   escapeHtml(item.rank) +
                   "</span>" +
                   '<span class="prize-amount">' +
-                  formatPrizeAmount(item.amount) +
+                  escapeHtml(formatPrizeAmount(item.amount)) +
                   "</span>" +
                   "</div>"
                 );
