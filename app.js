@@ -1308,7 +1308,7 @@
       '<td><span class="prize-row-handle" aria-label="순서 변경" title="드래그로 순서 변경">≡</span></td>' +
       '<td><input type="text" class="prize-row-rank" maxlength="24" placeholder="예: 1등" /></td>' +
       '<td><input type="text" class="prize-row-amount" inputmode="numeric" maxlength="20" placeholder="예: 1,500,000" /></td>' +
-      '<td><input type="text" class="prize-row-extra" maxlength="48" placeholder="예: + 10 FC" /></td>' +
+      '<td><input type="text" class="prize-row-extra" maxlength="48" placeholder="+10" title="추가 보상 (예: + 10 FC)" /></td>' +
       '<td><button type="button" class="btn-prize-row-remove">삭제</button></td>';
     var rankInput = tr.querySelector(".prize-row-rank");
     var amountInput = tr.querySelector(".prize-row-amount");
@@ -1349,8 +1349,12 @@
     var ths = theadRow.querySelectorAll("th");
     var hasExtraHeader = false;
     ths.forEach(function (th) {
-      if (th.classList.contains("modal-prize-col-extra")) hasExtraHeader = true;
-      if ((th.textContent || "").trim() === "추가 보상") hasExtraHeader = true;
+      var label = (th.textContent || "").trim();
+      if (th.classList.contains("modal-prize-col-extra") || label === "추가 보상" || label === "FC") {
+        hasExtraHeader = true;
+        th.classList.add("modal-prize-col-extra");
+        th.textContent = "FC";
+      }
     });
     if (hasExtraHeader) return;
     var removeTh = null;
@@ -1359,7 +1363,7 @@
     });
     var extraTh = document.createElement("th");
     extraTh.className = "modal-prize-col-extra";
-    extraTh.textContent = "추가 보상";
+    extraTh.textContent = "FC";
     if (removeTh) theadRow.insertBefore(extraTh, removeTh);
     else theadRow.appendChild(extraTh);
   }

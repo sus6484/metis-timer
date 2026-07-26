@@ -474,7 +474,7 @@ label.remote-meta-field.remote-meta-toggle-row {
 
 .prize-row {
   display: grid;
-  grid-template-columns: minmax(72px, 0.7fr) minmax(110px, 1fr) minmax(100px, 1fr) auto;
+  grid-template-columns: minmax(64px, 0.55fr) minmax(140px, 1.4fr) 4.5rem auto;
   gap: 8px;
   align-items: center;
 }
@@ -486,12 +486,16 @@ label.remote-meta-field.remote-meta-toggle-row {
   min-width: 0;
 }
 
+.prize-row-extra {
+  max-width: 4.5rem;
+}
+
 .modal--prize {
-  max-width: min(640px, calc(100vw - 32px));
+  max-width: min(560px, calc(100vw - 32px));
 }
 
 .modal-prize-col-handle {
-  width: 44px;
+  width: 40px;
 }
 
 .modal-prize-col-rank {
@@ -499,15 +503,15 @@ label.remote-meta-field.remote-meta-toggle-row {
 }
 
 .modal-prize-col-amount {
-  width: 28%;
+  width: auto;
 }
 
 .modal-prize-col-extra {
-  width: 30%;
+  width: 4.5rem;
 }
 
 .modal-prize-col-remove {
-  width: 72px;
+  width: 64px;
 }
 
 .btn-prize-row-remove {
@@ -518,6 +522,7 @@ label.remote-meta-field.remote-meta-toggle-row {
   font-size: 0.75rem;
   font-weight: 600;
   border: 1px solid var(--border);
+  white-space: nowrap;
 }
 
 .btn-prize-row-remove:hover {
@@ -534,8 +539,22 @@ label.remote-meta-field.remote-meta-toggle-row {
 
 .modal-prize-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 0.8125rem;
+}
+
+.modal-prize-table .prize-row-extra {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.modal-prize-table th.modal-prize-col-extra,
+.modal-prize-table td:nth-child(4),
+.modal-prize-table th.modal-prize-col-remove,
+.modal-prize-table td:nth-child(5) {
+  padding-left: 6px;
+  padding-right: 6px;
 }
 
 .modal-prize-table th,
