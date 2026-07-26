@@ -142,7 +142,14 @@
         continue;
       }
       if (k === "prizeItems" && Array.isArray(preset[k])) {
-        target[k] = preset[k].slice();
+        target[k] = preset[k].map(function (item) {
+          if (!item || typeof item !== "object") return item;
+          return {
+            rank: item.rank,
+            amount: item.amount,
+            extraPrize: item.extraPrize != null ? item.extraPrize : "",
+          };
+        });
       } else {
         target[k] = preset[k];
       }
@@ -428,7 +435,14 @@
         continue;
       }
       if (k === "prizeItems" && Array.isArray(remoteState[k])) {
-        updated[k] = remoteState[k].slice();
+        updated[k] = remoteState[k].map(function (item) {
+          if (!item || typeof item !== "object") return item;
+          return {
+            rank: item.rank,
+            amount: item.amount,
+            extraPrize: item.extraPrize != null ? item.extraPrize : "",
+          };
+        });
       } else {
         updated[k] = remoteState[k];
       }
@@ -1391,6 +1405,8 @@
 
   function openPrizeModal() {
     if (!modalPrize) return;
+    // 열 때마다 프리셋 SSOT에서 최신 상금 구조를 다시 읽음
+    syncRemoteStateMetaFromActivePreset();
     renderPrizeModalFromRemoteState();
     modalPrize.classList.add("is-open");
     updateModalScrollLock();
@@ -1402,22 +1418,83 @@
     updateModalScrollLock();
   }
 
+  var prizeSaveSeq = 0;
+
   function savePrizeModal() {
     var items = normalizePrizeItems(getPrizeItemsFromModal());
     if (!items.length) {
       alert("등수와 금액을 모두 입력한 상금 행이 최소 1개 필요합니다.");
       return;
     }
-    remoteState.prizeItems = items;
+    var aid = getActivePresetId();
+    if (!aid) {
+      alert("활성 프리셋이 없습니다. 프리셋을 선택한 뒤 다시 저장해 주세요.");
+      return;
+    }
+
+    var savedItems = items.map(function (it) {
+      return {
+        rank: it.rank,
+        amount: it.amount,
+        extraPrize: it.extraPrize ? String(it.extraPrize) : "",
+      };
+    });
+
+    remoteState.prizeItems = savedItems.slice();
     remoteState.prizeText = "";
     if ("guaranteedPrize" in remoteState) delete remoteState.guaranteedPrize;
-    persistAll();
-    if (MetisTimer.flushActivePresetMetadataToTimer) {
-      MetisTimer.flushActivePresetMetadataToTimer();
+
+    var seq = ++prizeSaveSeq;
+    if (modalPrizeSave) modalPrizeSave.disabled = true;
+
+    function reassertSavedPrizeItems() {
+      remoteState.prizeItems = savedItems.slice();
+      remoteState.prizeText = "";
+      if ("guaranteedPrize" in remoteState) delete remoteState.guaranteedPrize;
     }
-    renderRemote();
-    closePrizeModal();
-    showSaveToast("상금 스트럭처가 저장되었습니다.");
+
+    Promise.resolve(
+      mergeRemoteIntoActivePreset({
+        urgent: true,
+        changedPresetIds: [aid],
+      })
+    )
+      .then(function () {
+        if (seq !== prizeSaveSeq) return null;
+        // 스냅샷/메타 저장 레이스로 되돌림 방지 — 저장값 재적용 후 한 번 더 확정
+        reassertSavedPrizeItems();
+        return mergeRemoteIntoActivePreset({
+          urgent: true,
+          changedPresetIds: [aid],
+        });
+      })
+      .then(function () {
+        if (seq !== prizeSaveSeq) return;
+        reassertSavedPrizeItems();
+        syncRemoteStateMetaFromActivePreset();
+        reassertSavedPrizeItems();
+        persistTimerSync({ userAction: true, urgentCloudPush: true });
+        if (MetisTimer.flushActivePresetMetadataToTimer) {
+          MetisTimer.flushActivePresetMetadataToTimer();
+        }
+        // flush/subscribeSync 이후에도 저장값 유지
+        reassertSavedPrizeItems();
+        renderRemote();
+        closePrizeModal();
+        showSaveToast("상금 스트럭처가 저장되었습니다.");
+        console.log("[MetisFirestore|HOME|prizeSaved]", {
+          presetId: aid,
+          rows: savedItems.length,
+          items: savedItems,
+        });
+      })
+      .catch(function (err) {
+        console.warn("[MetisFirestore] 상금 저장 실패:", err);
+        alert("상금 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+      })
+      .then(function () {
+        if (modalPrizeSave) modalPrizeSave.disabled = false;
+      });
   }
 
   function ensurePrizeSortable() {
@@ -1506,6 +1583,9 @@
       var typedName = remoteState.tournamentName;
       var typedInfo = remoteState.tournamentInfo;
       var typedPrize = remoteState.totalPrizeText;
+      var typedPrizeItems = Array.isArray(remoteState.prizeItems)
+        ? remoteState.prizeItems.slice()
+        : null;
       var seq = ++metaSaveSeq;
 
       var savePromise = mergeRemoteIntoActivePreset({
@@ -1522,6 +1602,7 @@
           if (typedName != null) remoteState.tournamentName = typedName;
           if (typedInfo != null) remoteState.tournamentInfo = typedInfo;
           if (typedPrize != null) remoteState.totalPrizeText = typedPrize;
+          if (typedPrizeItems) remoteState.prizeItems = typedPrizeItems;
           persistTimerSync({ userAction: true, urgentCloudPush: true });
           if (MetisTimer.flushActivePresetMetadataToTimer) {
             MetisTimer.flushActivePresetMetadataToTimer();

@@ -161,7 +161,16 @@
   }
 
   function copyMetadataValue(key, val) {
-    if (key === "prizeItems" && Array.isArray(val)) return val.slice();
+    if (key === "prizeItems" && Array.isArray(val)) {
+      return val.map(function (item) {
+        if (!item || typeof item !== "object") return item;
+        return {
+          rank: item.rank,
+          amount: item.amount,
+          extraPrize: item.extraPrize != null ? item.extraPrize : "",
+        };
+      });
+    }
     return val;
   }
 
