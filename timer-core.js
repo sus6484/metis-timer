@@ -17,6 +17,31 @@
   /** 이 탭에서 사용자 조작 전까지 클라우드 우선 수용 (부팅 grace) */
   var sessionUserActionSeen = false;
 
+  /**
+   * 서버 시각 대비 로컬 시계 보정값(ms).
+   * syncedNow() = Date.now() + clockOffsetMs
+   * Firestore 등으로 측정한 뒤 setClockOffsetMs 로 주입한다.
+   */
+  var clockOffsetMs = 0;
+  var clockOffsetUpdatedAt = 0;
+
+  function syncedNow() {
+    return Date.now() + clockOffsetMs;
+  }
+
+  function setClockOffsetMs(offsetMs) {
+    var n = Number(offsetMs);
+    if (!Number.isFinite(n)) return;
+    // 비정상적으로 큰 값은 무시 (잘못된 측정 방어)
+    if (Math.abs(n) > 24 * 60 * 60 * 1000) return;
+    clockOffsetMs = Math.round(n);
+    clockOffsetUpdatedAt = Date.now();
+  }
+
+  function getClockOffsetMs() {
+    return clockOffsetMs;
+  }
+
   var bc = null;
   var localSyncListeners = [];
 
@@ -631,7 +656,7 @@
       state.timer = normalizeTimer(state.timer, state);
       ensureTotalSecondsState(state);
       syncLevelField(state);
-      reconcileRunningEndAt(state, Date.now());
+      reconcileRunningEndAt(state, syncedNow());
       return state;
     } catch (e) {
       return null;
@@ -750,7 +775,7 @@
       }
     }
     var u = Number(out.updatedAt);
-    if (!Number.isFinite(u) || u <= 0) u = Date.now();
+    if (!Number.isFinite(u) || u <= 0) u = syncedNow();
     out.updatedAt = u;
     var tu = Number(out.timerUpdatedAt);
     if (!Number.isFinite(tu) || tu <= 0) out.timerUpdatedAt = u;
@@ -780,7 +805,7 @@
         }
       }
       if (remPush > 0) {
-        out.timer.endAt = Date.now() + remPush * 1000;
+        out.timer.endAt = syncedNow() + remPush * 1000;
       }
     }
     return out;
@@ -910,9 +935,9 @@
   function applyCloudControlSlice(state, cloudSlice) {
     copyCloudSliceOntoState(state, cloudSlice);
     syncLevelField(state);
-    reconcileRunningEndAt(state, Date.now());
+    reconcileRunningEndAt(state, syncedNow());
     ensureTotalSecondsState(state);
-    state.displayTime = formatMMSS(remainingSec(state, Date.now()));
+    state.displayTime = formatMMSS(remainingSec(state, syncedNow()));
   }
 
   function assignSyncTimestamps(state, options) {
@@ -921,7 +946,7 @@
       syncDbg("PUSH", "assignSyncTimestamps:preserveUpdatedAt", statsSnippet(state));
       return;
     }
-    var now = Date.now();
+    var now = syncedNow();
     var curSU = Number(state.statsUpdatedAt) || 0;
     var curLA = Number(state.lastActionTimestamp) || 0;
 
@@ -1257,8 +1282,8 @@
     }
 
     applyCloudTickSlice(state, cloudSlice);
-    reconcileRunningEndAt(state, Date.now());
-    state.displayTime = formatMMSS(remainingSec(state, Date.now()));
+    reconcileRunningEndAt(state, syncedNow());
+    state.displayTime = formatMMSS(remainingSec(state, syncedNow()));
     syncDbg("PULL", "applyTimerSyncSlice:tick위치만적용", {
       heartbeatAt: cloudHb,
     });
@@ -1305,7 +1330,7 @@
     mergePresetsIntoState(state);
     if (syncPresetId) state.activePresetId = String(syncPresetId);
     if (!options.skipPresetEmbed) embedActivePresetTournament(state);
-    reconcileRunningEndAt(state, Date.now());
+    reconcileRunningEndAt(state, syncedNow());
     assignSyncTimestamps(state, options);
     var str = JSON.stringify(state);
     localStorage.setItem(getSyncStorageKey(), str);
@@ -1373,6 +1398,7 @@
     }
   }
 
+  /** rem = floor((deadline - now) / 1000). now 는 MetisTimer.now()(서버 보정) 권장 */
   function remainingSec(state, now) {
     var t = state.timer;
     if (!t) return 0;
@@ -1810,12 +1836,13 @@
 
   /**
    * 한 스텝: 만료 시 다음 레벨 반영 후 저장. UI는 remainingSec / state 로 갱신.
+   * 타이머 수학은 syncedNow(서버 보정), 창 소유권은 로컬 Date.now.
    */
   function engineStep() {
     var s = readSyncState();
     if (!s) return null;
-    var now = Date.now();
-    var canOwn = shouldOwnEngine(now);
+    var now = syncedNow();
+    var canOwn = shouldOwnEngine(Date.now());
     var t = normalizeTimer(s.timer, s);
     s.timer = t;
     var totalSecBefore = getTotalSeconds(s);
@@ -1838,8 +1865,8 @@
         advanced: false,
         leveledUp: false,
         finished: false,
-        rem: remainingSec(s, Date.now()),
-        now: Date.now(),
+        rem: remainingSec(s, syncedNow()),
+        now: syncedNow(),
         bridgeCompleted: bridgeCompleted,
       };
     }
@@ -1880,6 +1907,10 @@
     getSyncPresetId: getSyncPresetId,
     HEARTBEAT_KEY: HEARTBEAT_KEY,
     HEARTBEAT_MS: HEARTBEAT_MS,
+    /** 서버 시각으로 보정된 현재 시각(ms). 타이머 남은 시간·endAt 계산에 사용 */
+    now: syncedNow,
+    setClockOffsetMs: setClockOffsetMs,
+    getClockOffsetMs: getClockOffsetMs,
     readSyncState: readSyncState,
     writeSyncState: writeSyncState,
     defaultTimer: defaultTimer,

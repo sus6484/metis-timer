@@ -881,9 +881,9 @@
       </div>
     </div>
 
-    <script>window.__METIS_ASSET_V = "20260719k";</script>
-    <script type="module" src="firebase.js?v=20260719k"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260719k"></script>
+    <script>window.__METIS_ASSET_V = "20260726a";</script>
+    <script type="module" src="firebase.js?v=20260726a"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260726a"></script>
     <script>
       (function () {
         function startBoot() {
@@ -1295,7 +1295,12 @@
         }
 
         function updateTotalTime(step, tn, levels, currentRow) {
-          var now = typeof step.now === "number" ? step.now : Date.now();
+          var now =
+            typeof step.now === "number"
+              ? step.now
+              : MetisTimer.now
+                ? MetisTimer.now()
+                : Date.now();
           if (totalLastNow == null) totalLastNow = now;
 
           var isResetState =
@@ -1540,7 +1545,12 @@
         function renderView(step) {
           var s = step.state;
           var rem = step.rem;
-          var tNow = typeof step.now === "number" ? step.now : Date.now();
+          var tNow =
+            typeof step.now === "number"
+              ? step.now
+              : MetisTimer.now
+                ? MetisTimer.now()
+                : Date.now();
 
           setClockDisplay(rem);
           textIf("el-title", s.tournamentName || "토너먼트");
@@ -1749,7 +1759,12 @@
           var prevLevel = prevLevelSecExact;
           var step = MetisTimer.engineStep();
           if (!step) return;
-          var nowMs = typeof step.now === "number" ? step.now : Date.now();
+          var nowMs =
+            typeof step.now === "number"
+              ? step.now
+              : MetisTimer.now
+                ? MetisTimer.now()
+                : Date.now();
           var tNow = step.state.timer ? step.state.timer : null;
           var curBridgeSec =
             tNow && tNow.bridge && Number.isFinite(Number(tNow.bridge.until))
@@ -1811,7 +1826,7 @@
         function refreshFromBroadcast() {
           var s = MetisTimer.readSyncState();
           if (!s) return;
-          var now = Date.now();
+          var now = MetisTimer.now ? MetisTimer.now() : Date.now();
           var rem = MetisTimer.remainingSec(s, now);
           renderView({ state: s, rem: rem, now: now });
         }
@@ -1840,13 +1855,16 @@
           }
           var t = MetisTimer.normalizeTimer(s.timer, s);
           if (t.isRunning || t.bridge) {
-            MetisTimer.applyPause(s, Date.now());
+            MetisTimer.applyPause(s, MetisTimer.now ? MetisTimer.now() : Date.now());
           } else {
             try {
               var ctx = new (window.AudioContext || window.webkitAudioContext)();
               ctx.resume().catch(function () {});
             } catch (e) {}
-            MetisTimer.applyStartOrResume(s, Date.now());
+            MetisTimer.applyStartOrResume(
+              s,
+              MetisTimer.now ? MetisTimer.now() : Date.now()
+            );
           }
           MetisTimer.writeSyncState(s, {
             skipPresetEmbed: true,
@@ -1970,7 +1988,7 @@
             entry: s.entry,
             statsUpdatedAt: s.statsUpdatedAt,
           };
-          mutator(s, Date.now());
+          mutator(s, MetisTimer.now ? MetisTimer.now() : Date.now());
           console.log("[MetisSync|PUSH|mutateSync:변경] (timer.html)", {
             before: before,
             after: { player: s.player, entry: s.entry },
@@ -2170,6 +2188,10 @@
         MetisTimer.subscribeSync(refreshFromBroadcast);
         window.addEventListener("storage", refreshFromBroadcast);
         window.addEventListener("metis-presets-bootstrapped", refreshFromBroadcast);
+        window.addEventListener("metis-clock-synced", function () {
+          refreshFromBroadcast();
+          tick();
+        });
 
         if (
           window.MetisFirestoreSync &&

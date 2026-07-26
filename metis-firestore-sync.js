@@ -12,6 +12,8 @@ import { db } from "./firebase.js";
 import {
   doc,
   setDoc,
+  getDocFromServer,
+  serverTimestamp,
   onSnapshot,
   collection,
   writeBatch,
@@ -35,6 +37,49 @@ var controlOnApplied = null;
 var lastControlPushSig = "";
 var lastControlPushAt = 0;
 var CONTROL_HEARTBEAT_MIN_MS = 2500;
+
+/** Firestore 서버 시각 offset 재측정 주기 */
+var CLOCK_RESYNC_MS = 5 * 60 * 1000;
+var clockSyncInFlight = null;
+var clockResyncTimer = null;
+/** MetisTimer 로드 전에 측정된 offset 보관 */
+var pendingClockOffsetMs = null;
+
+function applyClockOffsetToTimer(offset, rtt) {
+  if (!Number.isFinite(offset)) return;
+  if (
+    window.MetisTimer &&
+    typeof MetisTimer.setClockOffsetMs === "function"
+  ) {
+    MetisTimer.setClockOffsetMs(offset);
+    pendingClockOffsetMs = null;
+    console.log("[MetisClock] offsetMs=", offset, "rttMs=", rtt != null ? rtt : "?");
+    if (typeof MetisTimer.notifyLocalSyncListeners === "function") {
+      MetisTimer.notifyLocalSyncListeners();
+    }
+    try {
+      window.dispatchEvent(
+        new CustomEvent("metis-clock-synced", {
+          detail: { offsetMs: offset, rttMs: rtt },
+        })
+      );
+    } catch (eEvt) {}
+  } else {
+    pendingClockOffsetMs = offset;
+  }
+}
+
+function flushPendingClockOffset() {
+  if (pendingClockOffsetMs == null) return false;
+  if (
+    !window.MetisTimer ||
+    typeof MetisTimer.setClockOffsetMs !== "function"
+  ) {
+    return false;
+  }
+  applyClockOffsetToTimer(pendingClockOffsetMs, null);
+  return true;
+}
 
 /** Firestore가 해당 영역의 단일 진실 공급원 */
 var isBuyInLive = true;
@@ -64,6 +109,67 @@ function buyInRef(presetId) {
 
 function controlRef(presetId) {
   return doc(db, CONTROL_COLLECTION, String(presetId));
+}
+
+function clockRef() {
+  // timerControl 쓰기 권한이 있는 경로를 재사용 (별도 컬렉션 규칙 불필요)
+  return doc(db, CONTROL_COLLECTION, "__metis_clock");
+}
+
+/**
+ * Firestore serverTimestamp 로 로컬 시계 오차(offset)를 측정한다.
+ * offset ≈ serverNow - Date.now()
+ * → MetisTimer.now() = Date.now() + offset 가 서버 시각에 맞춰진다.
+ */
+function syncServerClockOffset() {
+  if (clockSyncInFlight) return clockSyncInFlight;
+  clockSyncInFlight = (async function () {
+    var t0 = Date.now();
+    try {
+      await setDoc(
+        clockRef(),
+        {
+          serverTime: serverTimestamp(),
+          clientSentAt: t0,
+          purpose: "clock-sync",
+        },
+        { merge: true }
+      );
+      var snap = await getDocFromServer(clockRef());
+      var t1 = Date.now();
+      var data = snap && snap.data ? snap.data() : null;
+      var st = data && data.serverTime;
+      var serverMs =
+        st && typeof st.toMillis === "function"
+          ? st.toMillis()
+          : st && Number.isFinite(Number(st.seconds))
+            ? Number(st.seconds) * 1000 + Math.floor(Number(st.nanoseconds || 0) / 1e6)
+            : NaN;
+      if (!Number.isFinite(serverMs)) {
+        console.warn("[MetisClock] serverTimestamp 파싱 실패");
+        return null;
+      }
+      var rtt = Math.max(0, t1 - t0);
+      // 왕복의 중간 시점에 서버 시각이 기록됐다고 가정
+      var offset = Math.round(serverMs - (t0 + rtt / 2));
+      applyClockOffsetToTimer(offset, rtt);
+      return offset;
+    } catch (err) {
+      console.warn("[MetisClock] 동기화 실패 (로컬 시계 사용):", err);
+      return null;
+    } finally {
+      clockSyncInFlight = null;
+    }
+  })();
+  return clockSyncInFlight;
+}
+
+function startClockOffsetSync() {
+  syncServerClockOffset();
+  if (clockResyncTimer) return;
+  clockResyncTimer = setInterval(function () {
+    syncServerClockOffset();
+  }, CLOCK_RESYNC_MS);
 }
 
 function normalizeBuyIn(data) {
@@ -1191,6 +1297,8 @@ function bootTimerPage(resolvePresetIdFn) {
     window.__METIS_TIMER_PRESET_ID = resolveId();
     return loadScript("timer-core.js")
       .then(function () {
+        flushPendingClockOffset();
+        syncServerClockOffset();
         if (
           window.MetisTimer &&
           window.MetisTimer.syncAllPresetsMetadataFromStorage
@@ -1267,7 +1375,11 @@ window.MetisFirestoreSync = {
   bootTimerPage: bootTimerPage,
   bindCloudSyncBadge: bindCloudSyncBadge,
   setCloudSyncBadgeState: setCloudSyncBadgeState,
+  syncServerClockOffset: syncServerClockOffset,
+  startClockOffsetSync: startClockOffsetSync,
+  flushPendingClockOffset: flushPendingClockOffset,
 };
 
+startClockOffsetSync();
 window.dispatchEvent(new Event("metis-firebase-ready"));
-console.log("[MetisFirestore] 준비 완료 (바인 + 타이머 제어 + 프리셋)");
+console.log("[MetisFirestore] 준비 완료 (바인 + 타이머 제어 + 프리셋 + 시계보정)");

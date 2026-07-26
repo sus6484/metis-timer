@@ -981,7 +981,7 @@
       persistAll();
       return;
     }
-    var now = Date.now();
+    var now = MetisTimer.now ? MetisTimer.now() : Date.now();
     var targetIdx = Math.max(0, (parseInt(remoteState.level, 10) || 1) - 1);
     targetIdx = Math.min(targetIdx, levels.length - 1);
     s.timer = MetisTimer.normalizeTimer(s.timer || {}, s);
@@ -1562,7 +1562,7 @@
     remoteState = getRemote();
     elTimerStatus.textContent = remoteState.timerStatus || "대기중";
     var s = MetisTimer.readSyncState();
-    var now = Date.now();
+    var now = MetisTimer.now ? MetisTimer.now() : Date.now();
     var rem = s
       ? MetisTimer.remainingSec(s, now)
       : parseTimeToSec(remoteState.displayTime);
@@ -2279,7 +2279,7 @@
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       ctx.resume().catch(function () {});
     } catch (e1) {}
-    var now = Date.now();
+    var now = MetisTimer.now ? MetisTimer.now() : Date.now();
     var s = MetisTimer.readSyncState() || buildFullSync();
     var t = MetisTimer.normalizeTimer(s.timer || {}, s);
     if (MetisTimer.isEffectivelyRunningTimer(t, now)) {
@@ -2296,7 +2296,7 @@
 
   function doPause() {
     var s = MetisTimer.readSyncState() || buildFullSync();
-    MetisTimer.applyPause(s, Date.now());
+    MetisTimer.applyPause(s, MetisTimer.now ? MetisTimer.now() : Date.now());
     MetisTimer.writeSyncState(s, { userAction: true, urgentCloudPush: true });
     applySyncToRemoteState(s);
     renderRemote();
@@ -2304,7 +2304,10 @@
 
   function doRefresh() {
     var s = MetisTimer.readSyncState() || buildFullSync();
-    MetisTimer.applyLevelRefresh(s, Date.now());
+    MetisTimer.applyLevelRefresh(
+      s,
+      MetisTimer.now ? MetisTimer.now() : Date.now()
+    );
     MetisTimer.writeSyncState(s, { userAction: true, urgentCloudPush: true });
     applySyncToRemoteState(s);
     renderRemote();
@@ -2313,7 +2316,7 @@
   function doStop() {
     if (!window.confirm("타이머를 종료하시겠습니까?")) return;
     MetisTimer.setSyncPresetId(getActivePresetId());
-    var now = Date.now();
+    var now = MetisTimer.now ? MetisTimer.now() : Date.now();
     var s = MetisTimer.readSyncState() || buildFullSync();
     var levels = MetisTimer.getActiveLevels(s);
 
