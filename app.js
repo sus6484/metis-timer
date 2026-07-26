@@ -1265,13 +1265,17 @@
     }
   }
 
-  function normalizePrizeAmountValue(rawAmount) {
-    if (rawAmount == null) return "";
+  function parsePrizeAmountNumber(rawAmount) {
     if (typeof rawAmount === "number") {
-      if (!Number.isFinite(rawAmount) || rawAmount <= 0) return "";
-      return String(Math.floor(rawAmount));
+      return Math.max(0, Math.floor(Number.isFinite(rawAmount) ? rawAmount : 0));
     }
-    return String(rawAmount).trim().slice(0, 48);
+    var digits = String(rawAmount == null ? "" : rawAmount).replace(/\D/g, "");
+    if (!digits) return 0;
+    return Math.max(0, Math.floor(Number(digits) || 0));
+  }
+
+  function normalizeExtraPrize(raw) {
+    return String(raw != null ? raw : "").trim().slice(0, 48);
   }
 
   function normalizePrizeItems(raw) {
@@ -1280,35 +1284,38 @@
       .map(function (item) {
         if (!item || typeof item !== "object") return null;
         var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
-        var amount = normalizePrizeAmountValue(item.amount);
-        if (!rank || !amount) return null;
-        return { rank: rank, amount: amount };
+        var amountNum = parsePrizeAmountNumber(item.amount);
+        if (!rank || !amountNum) return null;
+        return {
+          rank: rank,
+          amount: amountNum,
+          extraPrize: normalizeExtraPrize(item.extraPrize),
+        };
       })
       .filter(Boolean);
   }
 
-  /** 순수 숫자(및 콤마)만일 때만 천단위 콤마 포맷. 기호·영문 포함 시 그대로 유지 */
   function formatAmountWithCommas(value) {
-    var raw = String(value == null ? "" : value);
-    if (!raw.trim()) return "";
-    if (!/^[\d,\s]+$/.test(raw)) return raw;
-    var digits = raw.replace(/\D/g, "");
+    var digits = String(value == null ? "" : value).replace(/\D/g, "");
     if (!digits) return "";
     return Number(digits).toLocaleString("ko-KR");
   }
 
-  function createPrizeModalRow(rank, amount) {
+  function createPrizeModalRow(rank, amount, extraPrize) {
     if (!modalPrizeTbody) return null;
     var tr = document.createElement("tr");
     tr.innerHTML =
       '<td><span class="prize-row-handle" aria-label="순서 변경" title="드래그로 순서 변경">≡</span></td>' +
       '<td><input type="text" class="prize-row-rank" maxlength="24" placeholder="예: 1등" /></td>' +
-      '<td><input type="text" class="prize-row-amount" maxlength="48" placeholder="예: 1,500,000 또는 + 10 FC" /></td>' +
+      '<td><input type="text" class="prize-row-amount" inputmode="numeric" maxlength="20" placeholder="예: 1,500,000" /></td>' +
+      '<td><input type="text" class="prize-row-extra" maxlength="48" placeholder="예: + 10 FC" /></td>' +
       '<td><button type="button" class="btn-prize-row-remove">삭제</button></td>';
     var rankInput = tr.querySelector(".prize-row-rank");
     var amountInput = tr.querySelector(".prize-row-amount");
+    var extraInput = tr.querySelector(".prize-row-extra");
     if (rankInput) rankInput.value = rank || "";
     if (amountInput) amountInput.value = formatAmountWithCommas(amount);
+    if (extraInput) extraInput.value = normalizeExtraPrize(extraPrize);
     modalPrizeTbody.appendChild(tr);
     return tr;
   }
@@ -1320,12 +1327,15 @@
     rows.forEach(function (row) {
       var rankInput = row.querySelector(".prize-row-rank");
       var amountInput = row.querySelector(".prize-row-amount");
+      var extraInput = row.querySelector(".prize-row-extra");
       var rank = rankInput ? String(rankInput.value || "").trim().slice(0, 24) : "";
-      var amount = amountInput
-        ? String(amountInput.value || "").trim().slice(0, 48)
+      var amountDigits = amountInput
+        ? String(amountInput.value || "").replace(/\D/g, "")
         : "";
+      var amount = amountDigits ? Math.max(0, Math.floor(Number(amountDigits) || 0)) : 0;
+      var extraPrize = extraInput ? normalizeExtraPrize(extraInput.value) : "";
       if (!rank || !amount) return;
-      out.push({ rank: rank, amount: amount });
+      out.push({ rank: rank, amount: amount, extraPrize: extraPrize });
     });
     return out;
   }
@@ -1335,11 +1345,11 @@
     modalPrizeTbody.innerHTML = "";
     var items = normalizePrizeItems(remoteState.prizeItems || []);
     if (!items.length) {
-      createPrizeModalRow("", "");
+      createPrizeModalRow("", "", "");
       return;
     }
     items.forEach(function (item) {
-      createPrizeModalRow(item.rank, item.amount);
+      createPrizeModalRow(item.rank, item.amount, item.extraPrize);
     });
   }
 
@@ -2458,7 +2468,7 @@
   }
   if (modalPrizeAdd) {
     modalPrizeAdd.addEventListener("click", function () {
-      createPrizeModalRow("", "");
+      createPrizeModalRow("", "", "");
     });
   }
   if (modalPrizeSave) {
@@ -2473,8 +2483,7 @@
       var target = e.target;
       if (!(target instanceof HTMLInputElement)) return;
       if (target.classList.contains("prize-row-amount")) {
-        var next = formatAmountWithCommas(target.value);
-        if (next !== target.value) target.value = next;
+        target.value = formatAmountWithCommas(target.value);
       }
     });
     modalPrizeTbody.addEventListener("click", function (e) {
@@ -2483,7 +2492,7 @@
       if (!target.classList.contains("btn-prize-row-remove")) return;
       var row = target.closest("tr");
       if (row) row.remove();
-      if (!modalPrizeTbody.querySelector("tr")) createPrizeModalRow("", "");
+      if (!modalPrizeTbody.querySelector("tr")) createPrizeModalRow("", "", "");
     });
   }
 

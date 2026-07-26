@@ -369,16 +369,17 @@
 
     <!-- 상금 스트럭처 편집 모달 -->
     <div id="modal-prize" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-prize-title">
-      <div class="modal" id="modal-prize-panel">
+      <div class="modal modal--prize" id="modal-prize-panel">
         <h3 id="modal-prize-title">상금 스트럭처 수정</h3>
         <div class="modal-prize-table-wrap">
           <table class="modal-prize-table" aria-label="등수별 상금">
             <thead>
               <tr>
-                <th style="width: 44px"></th>
-                <th>등수</th>
-                <th>금액</th>
-                <th style="width: 72px">삭제</th>
+                <th class="modal-prize-col-handle"></th>
+                <th class="modal-prize-col-rank">등수</th>
+                <th class="modal-prize-col-amount">금액</th>
+                <th class="modal-prize-col-extra">추가 보상</th>
+                <th class="modal-prize-col-remove">삭제</th>
               </tr>
             </thead>
             <tbody id="modal-prize-tbody"></tbody>
@@ -396,7 +397,7 @@
 
     <div id="save-toast" class="save-toast" role="status" aria-live="polite" hidden></div>
 
-    <script>window.__METIS_ASSET_V = "20260726a";</script>
+    <script>window.__METIS_ASSET_V = "20260726b";</script>
     <script type="module" src="firebase.js?v=20260726a"></script>
     <script type="module" src="metis-firestore-sync.js?v=20260726a"></script>
     <script src="timer-core.js?v=20260726a"></script>

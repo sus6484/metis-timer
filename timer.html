@@ -881,7 +881,7 @@
       </div>
     </div>
 
-    <script>window.__METIS_ASSET_V = "20260726a";</script>
+    <script>window.__METIS_ASSET_V = "20260726b";</script>
     <script type="module" src="firebase.js?v=20260726a"></script>
     <script type="module" src="metis-firestore-sync.js?v=20260726a"></script>
     <script>
@@ -951,19 +951,18 @@
             .replace(/'/g, "&#39;");
         }
 
-        function formatPrizeAmount(amount) {
-          if (amount == null) return "";
-          if (typeof amount === "number") {
-            if (!Number.isFinite(amount) || amount <= 0) return "";
-            return Math.floor(amount).toLocaleString("ko-KR");
+        function formatPrizeAmount(n) {
+          var value = Math.max(0, Math.floor(Number(n) || 0));
+          return value.toLocaleString("ko-KR");
+        }
+
+        function parsePrizeAmountNumber(rawAmount) {
+          if (typeof rawAmount === "number") {
+            return Math.max(0, Math.floor(Number.isFinite(rawAmount) ? rawAmount : 0));
           }
-          var raw = String(amount).trim();
-          if (!raw) return "";
-          if (/^[\d,]+$/.test(raw)) {
-            var n = Number(raw.replace(/,/g, ""));
-            if (Number.isFinite(n) && n > 0) return Math.floor(n).toLocaleString("ko-KR");
-          }
-          return raw;
+          var digits = String(rawAmount == null ? "" : rawAmount).replace(/\D/g, "");
+          if (!digits) return 0;
+          return Math.max(0, Math.floor(Number(digits) || 0));
         }
 
         function normalizePrizeItems(s) {
@@ -972,17 +971,18 @@
             .map(function (item) {
               if (!item || typeof item !== "object") return null;
               var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
-              var amount = "";
-              if (typeof item.amount === "number") {
-                if (!Number.isFinite(item.amount) || item.amount <= 0) return null;
-                amount = String(Math.floor(item.amount));
-              } else {
-                amount = String(item.amount != null ? item.amount : "").trim();
-              }
+              var amount = parsePrizeAmountNumber(item.amount);
               if (!rank || !amount) return null;
-              return { rank: rank, amount: amount };
+              var extraPrize = String(item.extraPrize != null ? item.extraPrize : "").trim();
+              return { rank: rank, amount: amount, extraPrize: extraPrize };
             })
             .filter(Boolean);
+        }
+
+        function displayPrizeAmountText(item) {
+          var amountText = formatPrizeAmount(item.amount);
+          var extra = item.extraPrize ? String(item.extraPrize).trim() : "";
+          return extra ? amountText + " " + extra : amountText;
         }
 
         function displayPrizeBlockHtml(s) {
@@ -999,7 +999,7 @@
                   escapeHtml(item.rank) +
                   "</span>" +
                   '<span class="prize-amount">' +
-                  escapeHtml(formatPrizeAmount(item.amount)) +
+                  escapeHtml(displayPrizeAmountText(item)) +
                   "</span>" +
                   "</div>"
                 );

@@ -474,14 +474,40 @@ label.remote-meta-field.remote-meta-toggle-row {
 
 .prize-row {
   display: grid;
-  grid-template-columns: minmax(100px, 0.9fr) minmax(150px, 1.1fr) auto;
+  grid-template-columns: minmax(72px, 0.7fr) minmax(110px, 1fr) minmax(100px, 1fr) auto;
   gap: 8px;
   align-items: center;
 }
 
 .prize-row-rank,
-.prize-row-amount {
+.prize-row-amount,
+.prize-row-extra {
   width: 100%;
+  min-width: 0;
+}
+
+.modal--prize {
+  max-width: min(640px, calc(100vw - 32px));
+}
+
+.modal-prize-col-handle {
+  width: 44px;
+}
+
+.modal-prize-col-rank {
+  width: 18%;
+}
+
+.modal-prize-col-amount {
+  width: 28%;
+}
+
+.modal-prize-col-extra {
+  width: 30%;
+}
+
+.modal-prize-col-remove {
+  width: 72px;
 }
 
 .btn-prize-row-remove {

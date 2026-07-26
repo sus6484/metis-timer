@@ -798,15 +798,24 @@ function normalizePresetForFs(preset) {
           .map(function (item) {
             if (!item || typeof item !== "object") return null;
             var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
-            var amount = "";
+            var amountNum = 0;
             if (typeof item.amount === "number") {
-              if (!Number.isFinite(item.amount) || item.amount <= 0) return null;
-              amount = String(Math.floor(item.amount));
+              amountNum = Math.max(
+                0,
+                Math.floor(Number.isFinite(item.amount) ? item.amount : 0)
+              );
             } else {
-              amount = String(item.amount != null ? item.amount : "").trim().slice(0, 48);
+              var digits = String(item.amount == null ? "" : item.amount).replace(/\D/g, "");
+              amountNum = digits ? Math.max(0, Math.floor(Number(digits) || 0)) : 0;
             }
-            if (!rank || !amount) return null;
-            return { rank: rank, amount: amount };
+            if (!rank || !amountNum) return null;
+            return {
+              rank: rank,
+              amount: amountNum,
+              extraPrize: String(item.extraPrize != null ? item.extraPrize : "")
+                .trim()
+                .slice(0, 48),
+            };
           })
           .filter(Boolean)
       : [],
