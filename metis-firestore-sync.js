@@ -769,9 +769,20 @@ var presetsUnsub = null;
 var presetsOnApplied = null;
 var presetsReady = false;
 var presetsReadyWaiters = [];
+/** PULL(onSnapshot) 적용 중 — 이 동안 클라우드 PUSH 금지 */
 var presetsApplyingRemote = false;
 /** 로컬→Firestore 푸시 대기열: 스냅샷이 이보다 오래되면 무시 */
 var pendingPresetWrites = {};
+/** 동일 페이로드 재푸시 차단 */
+var lastPresetPushSig = "";
+var lastPresetPushAt = 0;
+var PRESET_PUSH_MIN_MS = 1500;
+var PRESET_PUSH_MAX_PER_MIN = 20;
+var presetPushWindowStart = 0;
+var presetPushWindowCount = 0;
+/** 스냅샷 적용 직후 잠깐 PUSH 차단 (echo 재진입 방지) */
+var presetsPullCooldownUntil = 0;
+var PRESETS_PULL_COOLDOWN_MS = 2000;
 
 function presetsCol() {
   return collection(db, PRESETS_COLLECTION);
@@ -965,28 +976,113 @@ function whenPresetsReady(cb) {
   presetsReadyWaiters.push(cb);
 }
 
+function presetPushSignature(docs) {
+  try {
+    return (docs || [])
+      .map(function (d) {
+        return String(d.id) + ":" + (Number(d.updatedAt) || 0);
+      })
+      .sort()
+      .join("|");
+  } catch (e0) {
+    return String(Date.now());
+  }
+}
+
+function allowPresetPushRate(now) {
+  if (!presetPushWindowStart || now - presetPushWindowStart >= 60000) {
+    presetPushWindowStart = now;
+    presetPushWindowCount = 0;
+  }
+  if (presetPushWindowCount >= PRESET_PUSH_MAX_PER_MIN) {
+    console.warn(
+      "[MetisFirestore] savePresets 분당 한도 초과 — 쓰기 차단",
+      presetPushWindowCount
+    );
+    return false;
+  }
+  presetPushWindowCount += 1;
+  return true;
+}
+
+function isPresetsApplyingRemote() {
+  return (
+    !!presetsApplyingRemote || Date.now() < presetsPullCooldownUntil
+  );
+}
+
 /**
  * 단일/복수 프리셋을 Firestore에 저장
  * @param {object|object[]} presets
- * @param {{ urgent?: boolean }=} options
+ * @param {{ urgent?: boolean, fromUser?: boolean }=} options
+ *
+ * ⛔ onSnapshot(PULL) 적용 중·쿨다운 중에는 PUSH 하지 않는다.
+ *    soft-delete 톰스톤을 임의로 지우지 않는다(부활 핑퐁 방지).
  */
 function savePresetsToFirestore(presets, options) {
   options = options || {};
+  var fromUser = !!(options.fromUser || options.urgent);
+  var now = Date.now();
+
+  if (presetsApplyingRemote && !fromUser) {
+    console.warn(
+      "[MetisFirestore] savePresets: PULL 적용 중 PUSH 차단"
+    );
+    return Promise.resolve(null);
+  }
+  if (!fromUser && now < presetsPullCooldownUntil) {
+    console.warn(
+      "[MetisFirestore] savePresets: PULL 쿨다운 중 PUSH 차단"
+    );
+    return Promise.resolve(null);
+  }
+
   var list = Array.isArray(presets) ? presets : presets ? [presets] : [];
+  var deletedMap = loadFsDeletedMap();
   var docs = [];
   for (var i = 0; i < list.length; i++) {
     var normalized = normalizePresetForFs(list[i]);
     if (!normalized || normalized.deleted) continue;
-    if (!normalized.updatedAt) normalized.updatedAt = Date.now();
+    var pid = String(normalized.id);
+    // soft-delete 된 ID는 사용자 명시 복구가 아니면 절대 재업로드하지 않음
+    if (Object.prototype.hasOwnProperty.call(deletedMap, pid) && !options.forceUndelete) {
+      console.warn(
+        "[MetisFirestore] savePresets: 삭제된 프리셋 재푸시 차단",
+        pid
+      );
+      continue;
+    }
+    if (!normalized.updatedAt) normalized.updatedAt = now;
     normalized.deleted = false;
     docs.push(normalized);
-    clearPresetsDeletedFs([normalized.id]);
-    pendingPresetWrites[String(normalized.id)] = {
+    if (options.forceUndelete) {
+      clearPresetsDeletedFs([normalized.id]);
+    }
+    pendingPresetWrites[pid] = {
       updatedAt: normalized.updatedAt,
       payload: normalized,
     };
   }
   if (!docs.length) return Promise.resolve();
+
+  var sig = presetPushSignature(docs);
+  if (!fromUser && sig === lastPresetPushSig) {
+    return Promise.resolve(null);
+  }
+  if (
+    !fromUser &&
+    lastPresetPushAt > 0 &&
+    now - lastPresetPushAt < PRESET_PUSH_MIN_MS
+  ) {
+    console.warn("[MetisFirestore] savePresets: 최소 간격 미달 — 스킵");
+    return Promise.resolve(null);
+  }
+  if (!fromUser && !allowPresetPushRate(now)) {
+    return Promise.resolve(null);
+  }
+
+  lastPresetPushSig = sig;
+  lastPresetPushAt = now;
 
   console.log("[MetisFirestore|PUSH|savePresets]", {
     count: docs.length,
@@ -994,9 +1090,9 @@ function savePresetsToFirestore(presets, options) {
       return d.id;
     }),
     urgent: !!options.urgent,
+    fromUser: fromUser,
   });
 
-  // 스냅샷 적용 중이어도 로컬 쓰기는 드롭하지 않음 (이전엔 presetsApplyingRemote로 무시됨)
   var batch = writeBatch(db);
   for (var j = 0; j < docs.length; j++) {
     batch.set(presetDocRef(docs[j].id), docs[j], { merge: true });
@@ -1011,8 +1107,8 @@ function savePresetsToFirestore(presets, options) {
         if (p && p.id) byId[String(p.id)] = idx;
       });
       docs.forEach(function (d) {
-        var pid = String(d.id);
-        if (byId[pid] != null) local[byId[pid]] = d;
+        var docPid = String(d.id);
+        if (byId[docPid] != null) local[byId[docPid]] = d;
         else local.push(d);
       });
       saveLocalPresetsRaw(filterDeletedPresetsFs(local));
@@ -1089,7 +1185,6 @@ function applyPresetsSnapshot(snapshot) {
 
   if (remoteDeletedIds.length) {
     markPresetsDeletedFs(remoteDeletedIds);
-    changed = true;
     for (var di = 0; di < remoteDeletedIds.length; di++) {
       delete pendingPresetWrites[remoteDeletedIds[di]];
     }
@@ -1130,7 +1225,8 @@ function applyPresetsSnapshot(snapshot) {
       if (n && !n.updatedAt) n.updatedAt = Date.now();
       return n;
     }).filter(Boolean);
-    savePresetsToFirestore(seedList, { urgent: true });
+    // 시드는 사용자 마이그레이션 — fromUser로 가드 통과
+    savePresetsToFirestore(seedList, { urgent: true, fromUser: true });
     notifyPresetsReady();
     return { changed: false, seeded: true, presets: localList };
   }
@@ -1140,7 +1236,10 @@ function applyPresetsSnapshot(snapshot) {
   } catch (e2) {}
 
   var out = [];
-  var toPush = [];
+  // ⛔ PULL 경로에서 절대 자동 PUSH 하지 않음.
+  //    로컬이 더 최신이어도 대기열(pendingPresetWrites)만 유지하고
+  //    재업로드는 사용자 savePresets → savePresetsToFirestore 에만 맡긴다.
+  //    (이전: rU < lU / local-only 자동 toPush → 무한 핑퐁)
 
   remoteActive.forEach(function (rp) {
     var pid = String(rp.id);
@@ -1165,20 +1264,17 @@ function applyPresetsSnapshot(snapshot) {
     }
     var lU = presetUpdatedAt(lp);
     if (pending) lU = Math.max(lU, pending.updatedAt);
-    if (rU > lU) {
+    if (rU >= lU) {
+      // Firestore SSOT (동률 포함) — 로컬 재푸시 금지
+      out.push(mergeLocalTournamentOntoRemote(lp, rp));
+      if (rU > lU) changed = true;
+    } else if (pending) {
+      // 사용자 푸시 대기 중: 로컬 유지, PUSH는 하지 않음(이미 전송됨)
+      out.push(pending.payload);
+    } else {
+      // 로컬 updatedAt만 앞선 경우(hydrate 등) — 클라우드를 SSOT로 채택해 핑퐁 차단
       out.push(mergeLocalTournamentOntoRemote(lp, rp));
       changed = true;
-    } else if (rU < lU) {
-      var localNormNewer = pending
-        ? pending.payload
-        : normalizePresetForFs(lp);
-      out.push(localNormNewer || lp);
-      if (localNormNewer) toPush.push(localNormNewer);
-    } else {
-      // updatedAt 동일: Firestore를 SSOT로 채택. 로컬 재푸시 금지
-      // (정규화 JSON 미세 차이로 쓰기↔스냅샷 핑퐁 → 읽기 폭주 방지)
-      out.push(rp);
-      if (pending) delete pendingPresetWrites[pid];
     }
   });
 
@@ -1194,20 +1290,42 @@ function applyPresetsSnapshot(snapshot) {
       changed = true;
       return;
     }
+    // 원격에 없는 로컬 전용: 목록에는 유지하되 자동 업로드하지 않음
+    // (사용자가 저장/생성할 때 savePresetsToFirestore 가 처리)
     var localNorm = normalizePresetForFs(lp);
     if (!localNorm || localNorm.deleted) {
       changed = true;
       return;
     }
     out.push(localNorm);
-    toPush.push(localNorm);
-    changed = true;
   });
+
+  // 삭제만 반영된 경우에도 로컬 목록에서 제거 필요
+  // soft-delete 문서가 매 스냅샷에 남아 있어도, 로컬이 이미 정리됐으면 재저장하지 않음
+  var outFiltered = filterDeletedPresetsFs(out);
+  var localSig = "";
+  var outSig = "";
+  try {
+    localSig = JSON.stringify(
+      localList.map(function (p) {
+        return p && p.id ? String(p.id) + ":" + (Number(p.updatedAt) || 0) : "";
+      })
+    );
+    outSig = JSON.stringify(
+      outFiltered.map(function (p) {
+        return p && p.id ? String(p.id) + ":" + (Number(p.updatedAt) || 0) : "";
+      })
+    );
+  } catch (eSig) {
+    localSig = "";
+    outSig = "x";
+  }
+  var localNeedsRewrite = changed || localSig !== outSig;
 
   presetsApplyingRemote = true;
   try {
-    if (changed || remoteDeletedIds.length || !localList.length) {
-      saveLocalPresetsRaw(filterDeletedPresetsFs(out));
+    if (localNeedsRewrite) {
+      saveLocalPresetsRaw(outFiltered);
       if (
         window.MetisTimer &&
         typeof MetisTimer.syncAllPresetsMetadataFromStorage === "function"
@@ -1218,32 +1336,22 @@ function applyPresetsSnapshot(snapshot) {
     }
   } finally {
     presetsApplyingRemote = false;
-  }
-
-  if (toPush.length) {
-    toPush = toPush.filter(function (p) {
-      return (
-        p &&
-        p.id &&
-        !p.deleted &&
-        remoteDeletedIds.indexOf(String(p.id)) < 0 &&
-        !Object.prototype.hasOwnProperty.call(deletedMap, String(p.id))
-      );
-    });
-    if (toPush.length) savePresetsToFirestore(toPush, { urgent: false });
+    presetsPullCooldownUntil = Date.now() + PRESETS_PULL_COOLDOWN_MS;
   }
 
   console.log("[MetisFirestore|PULL|applyPresets]", {
     remote: remoteActive.length,
-    localOut: out.length,
+    localOut: outFiltered.length,
     changed: changed,
     deleted: remoteDeletedIds.length,
+    autoPush: false,
+    localRewrite: localNeedsRewrite,
   });
 
   notifyPresetsReady();
   return {
     changed: changed,
-    presets: filterDeletedPresetsFs(out),
+    presets: outFiltered,
     deletedIds: remoteDeletedIds,
   };
 }
@@ -1466,6 +1574,7 @@ window.MetisFirestoreSync = {
   whenPresetsReady: whenPresetsReady,
   filterDeletedPresetsFs: filterDeletedPresetsFs,
   clearPresetsDeletedFs: clearPresetsDeletedFs,
+  isPresetsApplyingRemote: isPresetsApplyingRemote,
   resolveBootPresetId: resolveBootPresetId,
   ensureTimerStateBootstrapped: ensureTimerStateBootstrapped,
   bootTimerPage: bootTimerPage,

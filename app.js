@@ -215,24 +215,43 @@
     ) {
       safe = MetisFirestoreSync.filterDeletedPresetsFs(safe);
     }
-    // Firestore 동기화용 updatedAt — 로컬만 저장해도 반드시 올려 LWW 역전 방지
+    // updatedAt 는 "실제로 바꾼 프리셋"에만 올린다.
+    // changedPresetIds / pushAllPresets 없으면 타임스탬프 유지
+    // (이전: 전체 Date.now() 갱신 → PULL 후 rU < lU → 자동 PUSH 핑퐁)
     var now = Date.now();
     var changedIds = options.changedPresetIds
       ? options.changedPresetIds.map(String)
       : null;
-    for (var i = 0; i < safe.length; i++) {
-      if (!safe[i] || !safe[i].id) continue;
-      if (
-        !changedIds ||
-        changedIds.indexOf(String(safe[i].id)) >= 0 ||
-        options.pushAllPresets
-      ) {
-        safe[i] = Object.assign({}, safe[i], { updatedAt: now });
+    var shouldBump =
+      !!options.pushAllPresets ||
+      (changedIds && changedIds.length > 0);
+    if (shouldBump) {
+      for (var i = 0; i < safe.length; i++) {
+        if (!safe[i] || !safe[i].id) continue;
+        if (
+          options.pushAllPresets ||
+          changedIds.indexOf(String(safe[i].id)) >= 0
+        ) {
+          safe[i] = Object.assign({}, safe[i], { updatedAt: now });
+        }
       }
     }
     localStorage.setItem(STORAGE.PRESETS, JSON.stringify(safe));
 
     if (options.skipCloudPush) return Promise.resolve(safe);
+
+    // PULL 적용 중이면 클라우드 푸시 생략 (로컬만 저장)
+    if (
+      window.MetisFirestoreSync &&
+      typeof MetisFirestoreSync.isPresetsApplyingRemote === "function" &&
+      MetisFirestoreSync.isPresetsApplyingRemote() &&
+      !options.urgent
+    ) {
+      console.warn(
+        "[MetisFirestore] savePresets: 원격 동기화 중 — 클라우드 푸시 스킵"
+      );
+      return Promise.resolve(safe);
+    }
 
     if (
       window.MetisFirestoreSync &&
@@ -248,6 +267,7 @@
       return Promise.resolve(
         MetisFirestoreSync.savePresetsToFirestore(toPush, {
           urgent: !!options.urgent,
+          fromUser: true,
         })
       ).then(function () {
         return safe;
@@ -373,6 +393,8 @@
     var changed = false;
     var next = list.map(function (orig) {
       var p = clonePresetData(orig);
+      // updatedAt 은 건드리지 않음 — 기본값 채우기만으로 LWW 역전/핑퐁 유발 금지
+      var prevUpdatedAt = p.updatedAt;
       PRESET_TOURNAMENT_KEYS.forEach(function (k) {
         if (p[k] === undefined) {
           p[k] = d[k];
@@ -389,9 +411,15 @@
           p.leftFontScale != null ? p.leftFontScale : d.prizeFontScale;
         changed = true;
       }
+      if (prevUpdatedAt != null) p.updatedAt = prevUpdatedAt;
       return p;
     });
-    if (changed) savePresets(next, { skipCloudPush: true });
+    if (changed) {
+      savePresets(next, {
+        skipCloudPush: true,
+        // changedPresetIds 없음 → updatedAt 일괄 갱신 안 함
+      });
+    }
   }
 
   function migrateFontScales(state) {
@@ -753,7 +781,7 @@
         if (prevPreset) {
           MetisFirestoreSync.savePresetsToFirestore(
             [Object.assign({}, prevPreset, { updatedAt: Date.now() })],
-            { urgent: true }
+            { urgent: true, fromUser: true }
           );
         }
       }
@@ -2636,6 +2664,7 @@
   });
 
   /** 홈 화면: Firestore presets onSnapshot → 목록/메타 즉시 다시 그리기 */
+  var lastLoggedDeletedSig = "";
   function refreshHomeFromPresetsSnapshot(result) {
     renderPresets();
     syncRemoteStateMetaFromActivePreset();
@@ -2644,7 +2673,12 @@
       renderRemote();
     }
     if (result && result.deletedIds && result.deletedIds.length) {
-      console.log("[MetisFirestore|HOME|presetsDeleted]", result.deletedIds);
+      var sig = result.deletedIds.slice().sort().join(",");
+      // soft-delete 문서가 매 스냅샷에 남아 있어도 동일 목록은 한 번만 로그
+      if (sig !== lastLoggedDeletedSig) {
+        lastLoggedDeletedSig = sig;
+        console.log("[MetisFirestore|HOME|presetsDeleted]", result.deletedIds);
+      }
     }
   }
 
