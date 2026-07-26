@@ -1340,8 +1340,33 @@
     return out;
   }
 
+  function ensurePrizeModalColumns() {
+    if (!modalPrize) return;
+    var panel = modalPrizePanel || modalPrize.querySelector(".modal");
+    if (panel) panel.classList.add("modal--prize");
+    var theadRow = modalPrize.querySelector(".modal-prize-table thead tr");
+    if (!theadRow) return;
+    var ths = theadRow.querySelectorAll("th");
+    var hasExtraHeader = false;
+    ths.forEach(function (th) {
+      if (th.classList.contains("modal-prize-col-extra")) hasExtraHeader = true;
+      if ((th.textContent || "").trim() === "추가 보상") hasExtraHeader = true;
+    });
+    if (hasExtraHeader) return;
+    var removeTh = null;
+    ths.forEach(function (th) {
+      if ((th.textContent || "").trim() === "삭제") removeTh = th;
+    });
+    var extraTh = document.createElement("th");
+    extraTh.className = "modal-prize-col-extra";
+    extraTh.textContent = "추가 보상";
+    if (removeTh) theadRow.insertBefore(extraTh, removeTh);
+    else theadRow.appendChild(extraTh);
+  }
+
   function renderPrizeModalFromRemoteState() {
     if (!modalPrizeTbody) return;
+    ensurePrizeModalColumns();
     modalPrizeTbody.innerHTML = "";
     var items = normalizePrizeItems(remoteState.prizeItems || []);
     if (!items.length) {
