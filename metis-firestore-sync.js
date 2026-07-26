@@ -36,12 +36,18 @@ var controlPresetId = "";
 var controlOnApplied = null;
 var lastControlPushSig = "";
 var lastControlPushAt = 0;
-var CONTROL_HEARTBEAT_MIN_MS = 2500;
+/** 비긴급 타이머 제어 쓰기 절대 하한(초당/분당 폭주 차단) */
+var CONTROL_PUSH_MIN_MS = 400;
+var CONTROL_PUSH_MAX_PER_MIN = 30;
+var controlPushWindowStart = 0;
+var controlPushWindowCount = 0;
 
-/** Firestore 서버 시각 offset 재측정 주기 */
+/** Firestore 서버 시각 offset 재측정 주기 (최소 5분, 단축 불가) */
 var CLOCK_RESYNC_MS = 5 * 60 * 1000;
+var CLOCK_RESYNC_MIN_GAP_MS = 5 * 60 * 1000;
 var clockSyncInFlight = null;
 var clockResyncTimer = null;
+var lastClockSyncAt = 0;
 /** MetisTimer 로드 전에 측정된 offset 보관 */
 var pendingClockOffsetMs = null;
 
@@ -120,12 +126,23 @@ function clockRef() {
  * Firestore serverTimestamp 로 로컬 시계 오차(offset)를 측정한다.
  * offset ≈ serverNow - Date.now()
  * → MetisTimer.now() = Date.now() + offset 가 서버 시각에 맞춰진다.
+ *
+ * ⛔ 최소 5분 간격. 짧은 주기/중첩 호출로 읽기·쓰기가 폭주하지 않도록 가드.
  */
-function syncServerClockOffset() {
+function syncServerClockOffset(force) {
   if (clockSyncInFlight) return clockSyncInFlight;
+  var now = Date.now();
+  if (
+    !force &&
+    lastClockSyncAt > 0 &&
+    now - lastClockSyncAt < CLOCK_RESYNC_MIN_GAP_MS
+  ) {
+    return Promise.resolve(null);
+  }
   clockSyncInFlight = (async function () {
     var t0 = Date.now();
     try {
+      lastClockSyncAt = t0;
       await setDoc(
         clockRef(),
         {
@@ -165,11 +182,18 @@ function syncServerClockOffset() {
 }
 
 function startClockOffsetSync() {
-  syncServerClockOffset();
+  syncServerClockOffset(true);
   if (clockResyncTimer) return;
   clockResyncTimer = setInterval(function () {
-    syncServerClockOffset();
+    syncServerClockOffset(false);
   }, CLOCK_RESYNC_MS);
+}
+
+function stopClockOffsetSync() {
+  if (clockResyncTimer) {
+    clearInterval(clockResyncTimer);
+    clockResyncTimer = null;
+  }
 }
 
 function normalizeBuyIn(data) {
@@ -253,19 +277,40 @@ function buildControlPayload(slice, presetId) {
   return out;
 }
 
+/**
+ * 의미 있는 제어 상태만 시그니처에 포함.
+ * endAt이 있으면 pausedRemainingSec는 매 초 변하므로 제외(하트비트 위장 쓰기 차단).
+ */
 function controlSignature(payload) {
   var t = payload && payload.timer ? payload.timer : {};
+  var hasEndAt = t.endAt != null && Number.isFinite(Number(t.endAt));
   return [
     payload.lastActionTimestamp || 0,
     payload.controlUpdatedAt || 0,
     t.isRunning ? 1 : 0,
     t.levelIndex || 0,
     t.endAt || 0,
-    t.pausedRemainingSec || 0,
+    hasEndAt ? 0 : t.pausedRemainingSec || 0,
     t.bridge ? t.bridge.kind + ":" + (t.bridge.until || 0) : "",
     payload.timerStatus || "",
     payload.hasStartedOnce ? 1 : 0,
   ].join("|");
+}
+
+function allowControlPushRate(now) {
+  if (!controlPushWindowStart || now - controlPushWindowStart >= 60000) {
+    controlPushWindowStart = now;
+    controlPushWindowCount = 0;
+  }
+  if (controlPushWindowCount >= CONTROL_PUSH_MAX_PER_MIN) {
+    console.warn(
+      "[MetisFirestore] saveTimerControl 분당 한도 초과 — 쓰기 차단",
+      controlPushWindowCount
+    );
+    return false;
+  }
+  controlPushWindowCount += 1;
+  return true;
 }
 
 /**
@@ -293,12 +338,23 @@ function saveBuyInStats(presetId, stats) {
  * @param {string} presetId
  * @param {object} slice - pickTimerSyncSlice / heartbeat 슬라이스
  * @param {{ urgent?: boolean, heartbeat?: boolean }=} options
+ *
+ * ⛔ heartbeat:true 쓰기는 전부 거부. 남은 시간은 endAt 로컬 계산.
+ *    쓰기 1회 = 모든 onSnapshot 리스너에 읽기 1회씩 발생.
  */
 function saveTimerControl(presetId, slice, options) {
   options = options || {};
   if (!presetId || !slice || typeof slice !== "object") return;
   var payload = buildControlPayload(slice, presetId);
   if (!payload.presetId) return;
+
+  // 표시용 하트비트는 클라우드 금지 (호출부가 실수로 넘겨도 차단)
+  if (options.heartbeat && !options.urgent) {
+    console.warn(
+      "[MetisFirestore] saveTimerControl: heartbeat 쓰기 차단 (로컬 endAt만 사용)"
+    );
+    return;
+  }
 
   var sig = controlSignature(payload);
   var now = Date.now();
@@ -307,14 +363,15 @@ function saveTimerControl(presetId, slice, options) {
   if (!urgent) {
     if (sig === lastControlPushSig) return;
     if (
-      options.heartbeat &&
       lastControlPushAt > 0 &&
-      now - lastControlPushAt < CONTROL_HEARTBEAT_MIN_MS &&
-      sig.split("|").slice(2).join("|") ===
-        lastControlPushSig.split("|").slice(2).join("|")
+      now - lastControlPushAt < CONTROL_PUSH_MIN_MS
     ) {
       return;
     }
+    if (!allowControlPushRate(now)) return;
+  } else if (sig === lastControlPushSig && lastControlPushAt > 0 && now - lastControlPushAt < 50) {
+    // 동일 urgent 연타만 무시
+    return;
   }
 
   lastControlPushSig = sig;
@@ -475,6 +532,29 @@ function applyTimerControlToLocal(presetId, raw) {
     return false;
   }
 
+  // 동일 조작 세대 + 제어 시그니처 동일 = display/heartbeat 잔여 스냅샷 → 스킵
+  // (과거 3초 heartbeat 문서가 남아 있어도 읽기→재적용 루프를 끊는다)
+  if (
+    remoteLA === localLA &&
+    localSlice &&
+    controlSignature(cloudSlice) === controlSignature(buildControlPayload(localSlice, pid))
+  ) {
+    var cloudHb = Number(cloudSlice.heartbeatAt) || 0;
+    var localHb = Number(state.heartbeatAt) || 0;
+    if (cloudHb <= localHb) {
+      setCloudSyncBadgeState("synced", "동기화됨");
+      return false;
+    }
+    // heartbeatAt만 앞선 경우: 로컬 타임스탬프만 맞추고 UI/클라우드 재푸시 없음
+    state.heartbeatAt = cloudHb;
+    MetisTimer.writeSyncState(state, {
+      skipCloudPush: true,
+      preserveUpdatedAt: true,
+    });
+    setCloudSyncBadgeState("synced", "동기화됨");
+    return false;
+  }
+
   var prevLevel =
     state.timer && state.timer.levelIndex != null ? state.timer.levelIndex : 0;
 
@@ -549,6 +629,7 @@ function startBuyInSync(presetId, onApplied) {
     return;
   }
 
+  // 프리셋 변경/재구독 전 반드시 기존 리스너 해제 (중복 onSnapshot 방지)
   stopBuyInSync();
   buyInPresetId = pid;
   buyInOnApplied = typeof onApplied === "function" ? onApplied : null;
@@ -584,6 +665,7 @@ function startTimerControlSync(presetId, onApplied) {
     return;
   }
 
+  // 프리셋 변경/재구독 전 반드시 기존 리스너 해제 (중복 onSnapshot 방지)
   stopTimerControlSync();
   controlPresetId = pid;
   controlOnApplied = typeof onApplied === "function" ? onApplied : null;
@@ -1093,22 +1175,10 @@ function applyPresetsSnapshot(snapshot) {
       out.push(localNormNewer || lp);
       if (localNormNewer) toPush.push(localNormNewer);
     } else {
-      var localNormEq = pending
-        ? pending.payload
-        : normalizePresetForFs(lp);
-      var sameContent = false;
-      try {
-        sameContent =
-          JSON.stringify(localNormEq) === JSON.stringify(rp);
-      } catch (eEq) {
-        sameContent = false;
-      }
-      if (sameContent) {
-        out.push(rp);
-      } else {
-        out.push(localNormEq || lp);
-        if (localNormEq) toPush.push(localNormEq);
-      }
+      // updatedAt 동일: Firestore를 SSOT로 채택. 로컬 재푸시 금지
+      // (정규화 JSON 미세 차이로 쓰기↔스냅샷 핑퐁 → 읽기 폭주 방지)
+      out.push(rp);
+      if (pending) delete pendingPresetWrites[pid];
     }
   });
 
@@ -1323,7 +1393,8 @@ function bootTimerPage(resolvePresetIdFn) {
     return loadScript("timer-core.js")
       .then(function () {
         flushPendingClockOffset();
-        syncServerClockOffset();
+        // 모듈 로드 시 이미 보정했으면 5분 가드로 스킵됨
+        syncServerClockOffset(false);
         if (
           window.MetisTimer &&
           window.MetisTimer.syncAllPresetsMetadataFromStorage
@@ -1402,6 +1473,7 @@ window.MetisFirestoreSync = {
   setCloudSyncBadgeState: setCloudSyncBadgeState,
   syncServerClockOffset: syncServerClockOffset,
   startClockOffsetSync: startClockOffsetSync,
+  stopClockOffsetSync: stopClockOffsetSync,
   flushPendingClockOffset: flushPendingClockOffset,
 };
 

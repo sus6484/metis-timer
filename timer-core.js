@@ -1369,6 +1369,10 @@
         });
       }
       // 타이머 제어(재생/일시정지/시계) → Firestore (SSOT)
+      // ⛔ cloudHeartbeat 는 절대 클라우드로 보내지 않음.
+      //    남은 시간은 endAt 기준 로컬 계산만 하며, 3초 heartbeat 쓰기는
+      //    onSnapshot 읽기를 폭증시켜 일일 한도(2만)를 쉽게 초과한다.
+      //    autoTick(레벨 만료·브리지 완료)만 의미 있는 상태 변경으로 푸시.
       if (
         pushPresetId &&
         global.MetisFirestoreSync &&
@@ -1376,17 +1380,15 @@
         typeof global.MetisFirestoreSync.saveTimerControl === "function"
       ) {
         var pushControl =
-          isUserSyncAction(options) ||
-          !!options.autoTick ||
-          !!options.cloudHeartbeat;
-        if (pushControl) {
-          var controlSlice =
-            options.cloudHeartbeat || options.autoTick
-              ? pickTimerHeartbeatSlice(state, pushPresetId)
-              : pickTimerSyncSlice(state, pushPresetId);
+          isUserSyncAction(options) || !!options.autoTick;
+        if (pushControl && !options.cloudHeartbeat) {
+          var controlSlice = options.autoTick
+            ? pickTimerHeartbeatSlice(state, pushPresetId)
+            : pickTimerSyncSlice(state, pushPresetId);
           global.MetisFirestoreSync.saveTimerControl(pushPresetId, controlSlice, {
             urgent: isUserSyncAction(options),
-            heartbeat: !!(options.cloudHeartbeat || options.autoTick),
+            // autoTick = 레벨/브리지 상태 전이. display heartbeat 가 아님.
+            heartbeat: false,
           });
         }
       } else {
@@ -1821,31 +1823,12 @@
     };
   }
 
-  var lastCloudHeartbeatAt = 0;
-  var CLOUD_HEARTBEAT_MS = 3000;
-
-  function needsCloudHeartbeat(state) {
-    if (!state) return false;
-    var t = state.timer;
-    if (t && (t.isRunning || t.bridge)) return true;
-    if (state.hasStartedOnce && (state.timerStatus || "") !== "대기중") return true;
-    return false;
-  }
-
-  function applyCloudHeartbeat(state, now) {
-    var t = normalizeTimer(state.timer, state);
-    state.timer = t;
-    reconcileRunningEndAt(state, now);
-    var rem = remainingSec(state, now);
-    state.displayTime = formatMMSS(rem);
-    if (!t.isRunning && !t.bridge) {
-      t.pausedRemainingSec = rem;
-    }
-  }
-
   /**
    * 한 스텝: 만료 시 다음 레벨 반영 후 저장. UI는 remainingSec / state 로 갱신.
    * 타이머 수학은 syncedNow(서버 보정), 창 소유권은 로컬 Date.now.
+   *
+   * ⛔ 초 단위 틱/하트비트는 Firestore에 쓰지 않는다.
+   *    클라우드는 사용자 조작·레벨 만료(autoTick)·브리지 완료만 반영.
    */
   function engineStep() {
     var s = readSyncState();
@@ -1884,18 +1867,14 @@
     if (res.advanced) {
       writeSyncState(res.state, { skipPresetEmbed: true, autoTick: true });
     } else if (canOwn && totalSecAfter !== totalSecBefore) {
-      writeSyncState(res.state, { skipPresetEmbed: true, autoTick: true });
+      // totalSeconds 변경은 로컬만 — Firestore 푸시 금지 (초당 쓰기 방지)
+      writeSyncState(res.state, {
+        skipPresetEmbed: true,
+        skipCloudPush: true,
+        autoTick: true,
+      });
     }
     var live = res.state;
-    if (
-      canOwn &&
-      needsCloudHeartbeat(live) &&
-      now - lastCloudHeartbeatAt >= CLOUD_HEARTBEAT_MS
-    ) {
-      lastCloudHeartbeatAt = now;
-      applyCloudHeartbeat(live, now);
-      writeSyncState(live, { skipPresetEmbed: true, cloudHeartbeat: true });
-    }
     var rem = remainingSec(live, now);
     return {
       state: live,
