@@ -297,13 +297,28 @@
     if (idx < 0) return;
     var updated = null;
     try {
-      updated = JSON.parse(JSON.stringify(presets[idx]));
+      updated =
+        typeof structuredClone === "function"
+          ? structuredClone(presets[idx])
+          : JSON.parse(JSON.stringify(presets[idx]));
     } catch (e0) {
       updated = Object.assign({}, presets[idx]);
+      if (Array.isArray(presets[idx].levels)) {
+        updated.levels = presets[idx].levels.map(function (row) {
+          return row && typeof row === "object" ? Object.assign({}, row) : row;
+        });
+      }
+      if (Array.isArray(presets[idx].prizeItems)) {
+        updated.prizeItems = presets[idx].prizeItems.map(function (item) {
+          return item && typeof item === "object" ? Object.assign({}, item) : item;
+        });
+      }
     }
     for (var j = 0; j < PRESET_METADATA_ONLY_KEYS.length; j++) {
       var key = PRESET_METADATA_ONLY_KEYS[j];
-      if (state[key] !== undefined) updated[key] = state[key];
+      if (state[key] !== undefined) {
+        updated[key] = copyMetadataValue(key, state[key]);
+      }
     }
     for (var c = 0; c < PRESET_BOUND_CONFIG_KEYS.length; c++) {
       var ck = PRESET_BOUND_CONFIG_KEYS[c];
@@ -311,7 +326,15 @@
     }
     updated.id = String(syncPresetId);
     var next = presets.map(function (p, i) {
-      return i === idx ? updated : p;
+      if (i === idx) return updated;
+      // 나머지 프리셋도 깊은 복사로 참조 분리
+      try {
+        return typeof structuredClone === "function"
+          ? structuredClone(p)
+          : JSON.parse(JSON.stringify(p));
+      } catch (e1) {
+        return p;
+      }
     });
     savePresetsToStorage(next);
   }

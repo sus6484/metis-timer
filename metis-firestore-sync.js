@@ -973,15 +973,28 @@ function filterDeletedPresetsFs(list) {
   });
 }
 
-/** 프리셋 문서용 정규화 — player/entry(실시간) 제외 */
+/** 프리셋 문서용 정규화 — player/entry(실시간) 제외. 중첩 배열은 깊은 복사 */
 function normalizePresetForFs(preset) {
   if (!preset || typeof preset !== "object") return null;
   var id = preset.id != null ? String(preset.id) : "";
   if (!id) return null;
+  var levelsClone = [];
+  if (Array.isArray(preset.levels)) {
+    try {
+      levelsClone =
+        typeof structuredClone === "function"
+          ? structuredClone(preset.levels)
+          : JSON.parse(JSON.stringify(preset.levels));
+    } catch (eLv) {
+      levelsClone = preset.levels.map(function (row) {
+        return row && typeof row === "object" ? Object.assign({}, row) : row;
+      });
+    }
+  }
   var out = {
     id: id,
     name: String(preset.name != null ? preset.name : "").trim() || "프리셋",
-    levels: Array.isArray(preset.levels) ? preset.levels : [],
+    levels: levelsClone,
     tournamentName:
       preset.tournamentName != null ? String(preset.tournamentName) : "",
     totalPrizeText:
@@ -1113,6 +1126,11 @@ function isPresetsApplyingRemote() {
   return (
     !!presetsApplyingRemote || Date.now() < presetsPullCooldownUntil
   );
+}
+
+/** onSnapshot 콜백 본문 실행 중(쿨다운 제외) — 홈 DOM 덮어쓰기 방지용 */
+function isPresetsPullInProgress() {
+  return !!presetsApplyingRemote;
 }
 
 /**
@@ -1289,9 +1307,8 @@ function deletePresetsFromFirestore(presetIds, options) {
 }
 
 function mergeLocalTournamentOntoRemote(localP, remoteP) {
-  var out = Object.assign({}, remoteP);
-  // 로컬에만 있던 player/entry 는 유지하지 않음(실시간 컬렉션 담당)
-  // 메타는 remote(Firestore) 우선 — LWW로 이미 선택된 쪽
+  // remote(Firestore) 우선. 중첩 필드 참조 공유 방지를 위해 정규화 복사
+  var out = normalizePresetForFs(remoteP) || Object.assign({}, remoteP);
   if (localP && localP.id) out.id = String(localP.id);
   return out;
 }
@@ -1438,24 +1455,38 @@ function applyPresetsSnapshot(snapshot) {
 
   // 삭제만 반영된 경우에도 로컬 목록에서 제거 필요
   // soft-delete 문서가 매 스냅샷에 남아 있어도, 로컬이 이미 정리됐으면 재저장하지 않음
-  var outFiltered = filterDeletedPresetsFs(out);
-  var localSig = "";
-  var outSig = "";
-  try {
-    localSig = JSON.stringify(
-      localList.map(function (p) {
-        return p && p.id ? String(p.id) + ":" + (Number(p.updatedAt) || 0) : "";
-      })
-    );
-    outSig = JSON.stringify(
-      outFiltered.map(function (p) {
-        return p && p.id ? String(p.id) + ":" + (Number(p.updatedAt) || 0) : "";
-      })
-    );
-  } catch (eSig) {
-    localSig = "";
-    outSig = "x";
+  var outFiltered = filterDeletedPresetsFs(out).map(function (p) {
+    return normalizePresetForFs(p) || p;
+  });
+  function presetContentSig(list) {
+    try {
+      return JSON.stringify(
+        (list || []).map(function (p) {
+          if (!p || !p.id) return "";
+          // updatedAt 외에 대회 메타·이름도 비교 — 동률 타임스탬프 내용 변경도 감지
+          return [
+            String(p.id),
+            Number(p.updatedAt) || 0,
+            String(p.name || ""),
+            String(p.tournamentName || ""),
+            String(p.tournamentInfo || ""),
+            String(p.totalPrizeText || ""),
+            String(p.prizeText || ""),
+            Array.isArray(p.prizeItems) ? p.prizeItems.length : 0,
+            Number(p.entryChips) || 0,
+            Number(p.infoFontScale) || 1,
+            Number(p.prizeFontScale) || 1,
+            p.leftPanelRotate ? 1 : 0,
+            Array.isArray(p.levels) ? p.levels.length : 0,
+          ].join(":");
+        })
+      );
+    } catch (eSig) {
+      return String(Date.now());
+    }
   }
+  var localSig = presetContentSig(localList);
+  var outSig = presetContentSig(outFiltered);
   var localNeedsRewrite = changed || localSig !== outSig;
 
   presetsApplyingRemote = true;
@@ -1485,11 +1516,17 @@ function applyPresetsSnapshot(snapshot) {
   });
 
   notifyPresetsReady();
-  return {
+  var appliedResult = {
     changed: changed,
     presets: outFiltered,
     deletedIds: remoteDeletedIds,
   };
+  try {
+    window.dispatchEvent(
+      new CustomEvent("metis-presets-remote-applied", { detail: appliedResult })
+    );
+  } catch (eEv) {}
+  return appliedResult;
 }
 
 function stopPresetsSync() {
@@ -1669,8 +1706,22 @@ function bootTimerPage(resolvePresetIdFn) {
         done = true;
         resolve();
       }
-      startPresetsSync(function () {
+      startPresetsSync(function (result) {
         finish();
+        // 부팅 이후 스냅샷에서도 타이머 메타 갱신 (finish는 1회만 동작)
+        if (
+          window.MetisTimer &&
+          typeof MetisTimer.syncAllPresetsMetadataFromStorage === "function"
+        ) {
+          MetisTimer.syncAllPresetsMetadataFromStorage();
+        }
+        try {
+          window.dispatchEvent(
+            new CustomEvent("metis-presets-remote-applied", {
+              detail: result || {},
+            })
+          );
+        } catch (e0) {}
       });
       whenPresetsReady(finish);
       setTimeout(finish, 8000);
@@ -1725,6 +1776,7 @@ window.MetisFirestoreSync = {
   filterDeletedPresetsFs: filterDeletedPresetsFs,
   clearPresetsDeletedFs: clearPresetsDeletedFs,
   isPresetsApplyingRemote: isPresetsApplyingRemote,
+  isPresetsPullInProgress: isPresetsPullInProgress,
   resolveBootPresetId: resolveBootPresetId,
   ensureTimerStateBootstrapped: ensureTimerStateBootstrapped,
   bootTimerPage: bootTimerPage,

@@ -2100,6 +2100,15 @@
         MetisTimer.subscribeSync(refreshFromBroadcast);
         window.addEventListener("storage", refreshFromBroadcast);
         window.addEventListener("metis-presets-bootstrapped", refreshFromBroadcast);
+        window.addEventListener("metis-presets-remote-applied", function () {
+          if (
+            MetisTimer.syncAllPresetsMetadataFromStorage
+          ) {
+            MetisTimer.syncAllPresetsMetadataFromStorage();
+          }
+          lastUi = {};
+          refreshFromBroadcast();
+        });
         window.addEventListener("metis-clock-synced", function () {
           refreshFromBroadcast();
           tick();
