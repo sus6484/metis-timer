@@ -1327,11 +1327,12 @@
         if (!item || typeof item !== "object") return null;
         var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
         var amountNum = parsePrizeAmountNumber(item.amount);
-        if (!rank || !amountNum) return null;
+        var extraPrize = normalizeExtraPrize(item.extraPrize);
+        if (!rank || (!amountNum && !extraPrize)) return null;
         return {
           rank: rank,
           amount: amountNum,
-          extraPrize: normalizeExtraPrize(item.extraPrize),
+          extraPrize: extraPrize,
         };
       })
       .filter(Boolean);
@@ -1356,7 +1357,7 @@
     var amountInput = tr.querySelector(".prize-row-amount");
     var extraInput = tr.querySelector(".prize-row-extra");
     if (rankInput) rankInput.value = rank || "";
-    if (amountInput) amountInput.value = formatAmountWithCommas(amount);
+    if (amountInput) amountInput.value = amount ? formatAmountWithCommas(amount) : "";
     if (extraInput) extraInput.value = normalizeExtraPrize(extraPrize);
     modalPrizeTbody.appendChild(tr);
     return tr;
@@ -1376,7 +1377,7 @@
         : "";
       var amount = amountDigits ? Math.max(0, Math.floor(Number(amountDigits) || 0)) : 0;
       var extraPrize = extraInput ? normalizeExtraPrize(extraInput.value) : "";
-      if (!rank || !amount) return;
+      if (!rank || (!amount && !extraPrize)) return;
       out.push({ rank: rank, amount: amount, extraPrize: extraPrize });
     });
     return out;
@@ -1451,7 +1452,7 @@
   function savePrizeModal() {
     var items = normalizePrizeItems(getPrizeItemsFromModal());
     if (!items.length) {
-      alert("등수와 금액을 모두 입력한 상금 행이 최소 1개 필요합니다.");
+      alert("등수와 함께 금액 또는 추가 보상을 입력한 상금 행이 최소 1개 필요합니다.");
       return;
     }
     var aid = getActivePresetId();

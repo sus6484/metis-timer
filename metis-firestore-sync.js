@@ -7,6 +7,18 @@
  * - presets/{presetId}        : 프리셋 목록
  *
  * Google Sheets 폴링은 사용하지 않음. 동기화는 Firestore + 로컬 상태만.
+ *
+ * ═══════════════════════════════════════════════════════════
+ * Firebase PUSH 디바운스 안전장치 (여기만 조절하면 됨)
+ * ───────────────────────────────────────────────────────────
+ * SYNC_DELAY_ENABLED : true  = 클라우드 전송을 SYNC_DELAY_MS 만큼 모아서 1회
+ *                      false = 디바운스 OFF (즉시 전송, 예전 동작에 가깝게)
+ * SYNC_DELAY_MS      : 대기 시간(ms). 권장 1500~2000. 너무 길면 줄이세요.
+ * 롤백               : ENABLED=false 하거나, 아래 scheduleFirestorePush 호출을
+ *                      각 flush* 직접 호출로 되돌리면 됩니다.
+ * options.immediate  : true면 이 호출만 디바운스 무시(삭제·시드 등)
+ * 로컬 UI            : localStorage/화면은 PUSH 전에 이미 반영(낙관적 업데이트)
+ * ═══════════════════════════════════════════════════════════
  */
 import { db } from "./firebase.js";
 import {
@@ -18,6 +30,72 @@ import {
   collection,
   writeBatch,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+
+/** @type {boolean} false 로 바꾸면 클라우드 PUSH 디바운스 비활성화 */
+var SYNC_DELAY_ENABLED = true;
+/** @type {number} 클라우드로 실제 전송하기 전 대기(ms). 1.5~2초 권장 */
+var SYNC_DELAY_MS = 1800;
+
+var syncDelayTimers = {};
+var syncDelayPending = {};
+/** presets 채널용: 디바운스 동안 id→doc 병합 */
+var syncDelayPendingDocs = {};
+
+/**
+ * 채널별 trailing debounce.
+ * 같은 channel 로 연속 호출되면 최신 runFn 만 SYNC_DELAY_MS 후 1회 실행.
+ * 로컬 반영은 호출부에서 이미 끝난 뒤 이 함수를 부르면 됨(낙관적 업데이트).
+ */
+function scheduleFirestorePush(channel, runFn, options) {
+  options = options || {};
+  var skipDelay =
+    !SYNC_DELAY_ENABLED ||
+    !!options.immediate ||
+    !!options.flushNow ||
+    !!options.skipSyncDelay;
+  if (typeof runFn !== "function") return Promise.resolve(null);
+
+  if (skipDelay) {
+    if (syncDelayTimers[channel]) {
+      clearTimeout(syncDelayTimers[channel]);
+      delete syncDelayTimers[channel];
+    }
+    delete syncDelayPending[channel];
+    try {
+      return Promise.resolve(runFn());
+    } catch (e0) {
+      return Promise.reject(e0);
+    }
+  }
+
+  syncDelayPending[channel] = runFn;
+  if (syncDelayTimers[channel]) clearTimeout(syncDelayTimers[channel]);
+  syncDelayTimers[channel] = setTimeout(function () {
+    var fn = syncDelayPending[channel];
+    delete syncDelayPending[channel];
+    delete syncDelayTimers[channel];
+    if (typeof fn === "function") {
+      try {
+        fn();
+      } catch (e1) {
+        console.warn("[MetisFirestore] deferred PUSH 실패:", channel, e1);
+      }
+    }
+  }, Math.max(0, Number(SYNC_DELAY_MS) || 0));
+
+  return Promise.resolve({ deferred: true, channel: channel, delayMs: SYNC_DELAY_MS });
+}
+
+function flushDeferredFirestorePush(channel) {
+  if (syncDelayTimers[channel]) {
+    clearTimeout(syncDelayTimers[channel]);
+    delete syncDelayTimers[channel];
+  }
+  var fn = syncDelayPending[channel];
+  delete syncDelayPending[channel];
+  if (typeof fn === "function") return Promise.resolve(fn());
+  return Promise.resolve(null);
+}
 
 var BUY_IN_COLLECTION = "timerBuyIn";
 var CONTROL_COLLECTION = "timerControl";
@@ -315,32 +393,45 @@ function allowControlPushRate(now) {
 
 /**
  * 바인 인원 변경을 Firestore에 저장 (merge)
+ * 로컬 상태는 호출부(writeSyncState)에서 이미 반영됨 → 여기는 클라우드만 디바운스.
  */
-function saveBuyInStats(presetId, stats) {
+function saveBuyInStats(presetId, stats, options) {
+  options = options || {};
   if (!presetId || !stats || typeof stats !== "object") return;
   var payload = normalizeBuyIn(stats);
   if (!payload.statsUpdatedAt) payload.statsUpdatedAt = Date.now();
   payload.updatedAt = Date.now();
   lastPushedStatsAt = payload.statsUpdatedAt;
-  console.log("[MetisFirestore|PUSH|saveBuyInStats]", {
-    presetId: String(presetId),
-    player: payload.player,
-    entry: payload.entry,
-    statsUpdatedAt: payload.statsUpdatedAt,
-  });
-  return setDoc(buyInRef(presetId), payload, { merge: true }).catch(function (err) {
-    console.warn("[MetisFirestore] 바인 인원 저장 실패:", err);
-  });
+  var pid = String(presetId);
+  var channel = "buyIn:" + pid;
+
+  return scheduleFirestorePush(
+    channel,
+    function () {
+      console.log("[MetisFirestore|PUSH|saveBuyInStats]", {
+        presetId: pid,
+        player: payload.player,
+        entry: payload.entry,
+        statsUpdatedAt: payload.statsUpdatedAt,
+        deferred: !!(SYNC_DELAY_ENABLED && !options.immediate),
+      });
+      return setDoc(buyInRef(pid), payload, { merge: true }).catch(function (err) {
+        console.warn("[MetisFirestore] 바인 인원 저장 실패:", err);
+      });
+    },
+    options
+  );
 }
 
 /**
  * 타이머 제어 상태를 Firestore에 저장
  * @param {string} presetId
  * @param {object} slice - pickTimerSyncSlice / heartbeat 슬라이스
- * @param {{ urgent?: boolean, heartbeat?: boolean }=} options
+ * @param {{ urgent?: boolean, heartbeat?: boolean, immediate?: boolean }=} options
  *
  * ⛔ heartbeat:true 쓰기는 전부 거부. 남은 시간은 endAt 로컬 계산.
  *    쓰기 1회 = 모든 onSnapshot 리스너에 읽기 1회씩 발생.
+ *    로컬 UI는 writeSyncState 가 먼저 처리 — 클라우드는 디바운스.
  */
 function saveTimerControl(presetId, slice, options) {
   options = options || {};
@@ -359,6 +450,10 @@ function saveTimerControl(presetId, slice, options) {
   var sig = controlSignature(payload);
   var now = Date.now();
   var urgent = !!options.urgent;
+  // 시작/일시정지 등 urgent 는 기기 간 체감을 위해 즉시 전송
+  var pushOpts = Object.assign({}, options, {
+    immediate: !!options.immediate || urgent,
+  });
 
   if (!urgent) {
     if (sig === lastControlPushSig) return;
@@ -377,20 +472,28 @@ function saveTimerControl(presetId, slice, options) {
   lastControlPushSig = sig;
   lastControlPushAt = now;
 
-  console.log("[MetisFirestore|PUSH|saveTimerControl]", {
-    presetId: payload.presetId,
-    urgent: urgent,
-    heartbeat: !!options.heartbeat,
-    lastActionTimestamp: payload.lastActionTimestamp,
-    isRunning: payload.timer && payload.timer.isRunning,
-    endAt: payload.timer && payload.timer.endAt,
-    levelIndex: payload.timer && payload.timer.levelIndex,
-    timerStatus: payload.timerStatus,
-  });
-
-  return setDoc(controlRef(presetId), payload, { merge: true }).catch(function (err) {
-    console.warn("[MetisFirestore] 타이머 제어 저장 실패:", err);
-  });
+  var channel = "timerControl:" + payload.presetId;
+  return scheduleFirestorePush(
+    channel,
+    function () {
+      console.log("[MetisFirestore|PUSH|saveTimerControl]", {
+        presetId: payload.presetId,
+        urgent: urgent,
+        heartbeat: !!options.heartbeat,
+        lastActionTimestamp: payload.lastActionTimestamp,
+        isRunning: payload.timer && payload.timer.isRunning,
+        endAt: payload.timer && payload.timer.endAt,
+        levelIndex: payload.timer && payload.timer.levelIndex,
+        timerStatus: payload.timerStatus,
+      });
+      return setDoc(controlRef(payload.presetId), payload, { merge: true }).catch(
+        function (err) {
+          console.warn("[MetisFirestore] 타이머 제어 저장 실패:", err);
+        }
+      );
+    },
+    pushOpts
+  );
 }
 
 function applyBuyInToLocal(presetId, raw) {
@@ -901,13 +1004,14 @@ function normalizePresetForFs(preset) {
               var digits = String(item.amount == null ? "" : item.amount).replace(/\D/g, "");
               amountNum = digits ? Math.max(0, Math.floor(Number(digits) || 0)) : 0;
             }
-            if (!rank || !amountNum) return null;
+            var extraPrize = String(item.extraPrize != null ? item.extraPrize : "")
+              .trim()
+              .slice(0, 48);
+            if (!rank || (!amountNum && !extraPrize)) return null;
             return {
               rank: rank,
               amount: amountNum,
-              extraPrize: String(item.extraPrize != null ? item.extraPrize : "")
-                .trim()
-                .slice(0, 48),
+              extraPrize: extraPrize,
             };
           })
           .filter(Boolean)
@@ -1014,10 +1118,11 @@ function isPresetsApplyingRemote() {
 /**
  * 단일/복수 프리셋을 Firestore에 저장
  * @param {object|object[]} presets
- * @param {{ urgent?: boolean, fromUser?: boolean }=} options
+ * @param {{ urgent?: boolean, fromUser?: boolean, immediate?: boolean }=} options
  *
  * ⛔ onSnapshot(PULL) 적용 중·쿨다운 중에는 PUSH 하지 않는다.
  *    soft-delete 톰스톤을 임의로 지우지 않는다(부활 핑퐁 방지).
+ *    pendingPresetWrites / 로컬은 즉시 갱신하고, setDoc 만 디바운스.
  */
 function savePresetsToFirestore(presets, options) {
   options = options || {};
@@ -1058,6 +1163,7 @@ function savePresetsToFirestore(presets, options) {
     if (options.forceUndelete) {
       clearPresetsDeletedFs([normalized.id]);
     }
+    // LWW용 대기열은 즉시 등록 (디바운스 중에도 PULL이 덮지 않도록)
     pendingPresetWrites[pid] = {
       updatedAt: normalized.updatedAt,
       payload: normalized,
@@ -1084,40 +1190,66 @@ function savePresetsToFirestore(presets, options) {
   lastPresetPushSig = sig;
   lastPresetPushAt = now;
 
-  console.log("[MetisFirestore|PUSH|savePresets]", {
-    count: docs.length,
-    ids: docs.map(function (d) {
-      return d.id;
-    }),
-    urgent: !!options.urgent,
-    fromUser: fromUser,
+  // 채널 하나에 문서들을 id 기준으로 합친 뒤 디바운스 플러시
+  var channel = "presets";
+  if (!syncDelayPendingDocs) syncDelayPendingDocs = {};
+  docs.forEach(function (d) {
+    syncDelayPendingDocs[String(d.id)] = d;
   });
 
-  var batch = writeBatch(db);
-  for (var j = 0; j < docs.length; j++) {
-    batch.set(presetDocRef(docs[j].id), docs[j], { merge: true });
-  }
-  return batch
-    .commit()
-    .then(function () {
-      // 커밋 성공 직후 로컬도 동일 페이로드로 확정
-      var local = loadLocalPresetsRaw();
-      var byId = {};
-      local.forEach(function (p, idx) {
-        if (p && p.id) byId[String(p.id)] = idx;
+  var pushOpts = Object.assign({}, options, {
+    // 시드·강제 즉시만 immediate. 일반 저장은 디바운스로 연속 수정 합치기
+    immediate: !!options.immediate,
+  });
+
+  return scheduleFirestorePush(
+    channel,
+    function () {
+      var merged = [];
+      var ids = Object.keys(syncDelayPendingDocs || {});
+      for (var m = 0; m < ids.length; m++) {
+        merged.push(syncDelayPendingDocs[ids[m]]);
+      }
+      syncDelayPendingDocs = {};
+      if (!merged.length) return Promise.resolve(null);
+
+      console.log("[MetisFirestore|PUSH|savePresets]", {
+        count: merged.length,
+        ids: merged.map(function (d) {
+          return d.id;
+        }),
+        urgent: !!options.urgent,
+        fromUser: fromUser,
+        deferred: !!(SYNC_DELAY_ENABLED && !pushOpts.immediate),
       });
-      docs.forEach(function (d) {
-        var docPid = String(d.id);
-        if (byId[docPid] != null) local[byId[docPid]] = d;
-        else local.push(d);
-      });
-      saveLocalPresetsRaw(filterDeletedPresetsFs(local));
-      return docs;
-    })
-    .catch(function (err) {
-      console.warn("[MetisFirestore] 프리셋 저장 실패:", err);
-      return null;
-    });
+
+      var batch = writeBatch(db);
+      for (var j = 0; j < merged.length; j++) {
+        batch.set(presetDocRef(merged[j].id), merged[j], { merge: true });
+      }
+      return batch
+        .commit()
+        .then(function () {
+          var local = loadLocalPresetsRaw();
+          var byId = {};
+          local.forEach(function (p, idx) {
+            if (p && p.id) byId[String(p.id)] = idx;
+          });
+          merged.forEach(function (d) {
+            var docPid = String(d.id);
+            if (byId[docPid] != null) local[byId[docPid]] = d;
+            else local.push(d);
+          });
+          saveLocalPresetsRaw(filterDeletedPresetsFs(local));
+          return merged;
+        })
+        .catch(function (err) {
+          console.warn("[MetisFirestore] 프리셋 저장 실패:", err);
+          return null;
+        });
+    },
+    pushOpts
+  );
 }
 
 /**
@@ -1225,8 +1357,12 @@ function applyPresetsSnapshot(snapshot) {
       if (n && !n.updatedAt) n.updatedAt = Date.now();
       return n;
     }).filter(Boolean);
-    // 시드는 사용자 마이그레이션 — fromUser로 가드 통과
-    savePresetsToFirestore(seedList, { urgent: true, fromUser: true });
+    // 시드는 사용자 마이그레이션 — 즉시 전송
+    savePresetsToFirestore(seedList, {
+      urgent: true,
+      fromUser: true,
+      immediate: true,
+    });
     notifyPresetsReady();
     return { changed: false, seeded: true, presets: localList };
   }
@@ -1551,6 +1687,20 @@ window.MetisFirestoreSync = {
   isBuyInLive: isBuyInLive,
   isTimerControlLive: isTimerControlLive,
   isPresetsLive: isPresetsLive,
+  /** PUSH 디바운스 ON/OFF — false 면 즉시 전송 */
+  SYNC_DELAY_ENABLED: SYNC_DELAY_ENABLED,
+  /** PUSH 대기 ms (기본 1800) */
+  SYNC_DELAY_MS: SYNC_DELAY_MS,
+  setSyncDelayEnabled: function (on) {
+    SYNC_DELAY_ENABLED = !!on;
+    window.MetisFirestoreSync.SYNC_DELAY_ENABLED = SYNC_DELAY_ENABLED;
+  },
+  setSyncDelayMs: function (ms) {
+    var n = Math.max(0, Math.floor(Number(ms) || 0));
+    SYNC_DELAY_MS = n;
+    window.MetisFirestoreSync.SYNC_DELAY_MS = SYNC_DELAY_MS;
+  },
+  flushDeferredFirestorePush: flushDeferredFirestorePush,
   saveBuyInStats: saveBuyInStats,
   saveTimerControl: saveTimerControl,
   savePresetsToFirestore: savePresetsToFirestore,

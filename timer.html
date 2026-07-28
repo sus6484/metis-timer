@@ -16,14 +16,15 @@
         --cyan: #38bdf8;
         --text: #fff;
         --muted: #94a3b8;
-        /* 전체화면·와이드에서 좌우 패널을 화면 끝 쪽으로 활용 */
-        --timer-layout-max: min(2560px, 99vw);
+        --timer-design-w: 1920px;
+        --timer-design-h: 1080px;
+        --timer-layout-max: 1920px;
       }
       * {
         box-sizing: border-box;
       }
       html {
-        overflow-x: hidden;
+        overflow: hidden;
         -webkit-text-size-adjust: 100%;
         text-size-adjust: 100%;
         touch-action: manipulation;
@@ -34,44 +35,61 @@
         margin: 0;
         max-width: 100%;
       }
+      /* 레터박스: 남는 여백은 검은색, 스테이지는 중앙 */
       body {
-        min-height: 100vh;
-        min-height: 100dvh;
-        min-height: -webkit-fill-available;
+        min-height: 100%;
+        background: #000;
+        color: var(--text);
+        font-family: Pretendard, system-ui, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        position: relative;
+        overflow: hidden;
+        width: 100%;
+      }
+      /* 기준 해상도 1920×1080 — 창 크기에 따라 transform: scale() 로만 축소/확대 */
+      .timer-stage {
+        width: var(--timer-design-w);
+        height: var(--timer-design-h);
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        overflow: hidden;
+        transform-origin: center center;
         background-color: var(--bg);
         background-image: url("image/background2.png");
         background-repeat: no-repeat;
         background-position: center center;
         background-size: cover;
-        color: var(--text);
-        font-family: Pretendard, system-ui, sans-serif;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        padding: max(6px, env(safe-area-inset-top, 0px)) max(4px, env(safe-area-inset-right, 0px))
-          max(20px, env(safe-area-inset-bottom, 0px)) max(2px, env(safe-area-inset-left, 0px));
-        position: relative;
-        overflow-x: hidden;
-        overflow-y: hidden;
-        width: 100%;
+        transform: translate(-50%, -50%);
+        will-change: transform;
       }
-      body::before {
+      .timer-stage::before {
         content: "";
-        position: fixed;
+        position: absolute;
         inset: 0;
         background: rgba(0, 0, 0, 0.8);
         pointer-events: none;
         z-index: 0;
       }
-      body > * {
-        position: relative;
+      .timer-stage > * {
         z-index: 1;
+      }
+      .timer-stage > .timer-page-header,
+      .timer-stage > .outer-layout,
+      .timer-stage > .break-top-bar {
+        position: relative;
       }
       .timer-page-header {
         width: 100%;
-        max-width: min(99vw, var(--timer-layout-max));
+        max-width: var(--timer-layout-max);
         margin: 0 auto 2px;
-        padding: 0 8px 0;
+        padding: 8px 8px 0;
         text-align: center;
         flex-shrink: 0;
       }
@@ -79,7 +97,7 @@
         margin: 0;
         color: var(--pink);
         text-shadow: 0 0 8px rgba(204, 255, 0, 0.45), 0 0 20px rgba(204, 255, 0, 0.25);
-        font-size: clamp(1.5rem, 5.2vw, 2.85rem);
+        font-size: 2.85rem;
         font-weight: 800;
         line-height: 1.2;
         letter-spacing: -0.02em;
@@ -89,11 +107,11 @@
         overflow-wrap: anywhere;
       }
       .timer-header-logo {
-        width: min(72px, 16vw);
+        width: 72px;
         max-width: 100%;
         height: auto;
         display: block;
-        margin: clamp(10px, 1.6vh, 18px) auto 4px;
+        margin: 18px auto 4px;
         opacity: 0.82;
       }
       .outer-layout {
@@ -102,20 +120,21 @@
         flex-direction: row;
         align-items: stretch;
         justify-content: space-between;
-        width: min(99vw, var(--timer-layout-max));
-        max-width: min(99vw, var(--timer-layout-max));
-        gap: clamp(10px, 2vw, 28px);
-        flex-wrap: wrap;
+        width: 100%;
+        max-width: var(--timer-layout-max);
+        gap: 28px;
+        flex-wrap: nowrap;
         margin: 0 auto;
         min-height: 0;
         overflow: hidden;
+        padding: 0 24px 24px;
       }
       .stage-left {
-        flex: 0 1 320px;
-        min-width: 240px;
-        max-width: 380px;
+        flex: 0 0 340px;
+        min-width: 340px;
+        max-width: 340px;
         min-height: 0;
-        padding: 6px clamp(10px, 1.3vw, 16px) 8px clamp(18px, 2.9vw, 34px);
+        padding: 6px 16px 8px 34px;
         border-right: 1px solid rgba(255, 255, 255, 0.12);
         display: flex;
         flex-direction: column;
@@ -194,7 +213,7 @@
         --ls: var(--prize-font-scale, var(--left-font-scale, 1));
         margin: 0;
         color: var(--pink);
-        font-size: calc(clamp(1.1rem, 3.4vw, 1.85rem) * var(--ls));
+        font-size: calc(1.85rem * var(--ls));
         font-weight: 800;
         line-height: 1.2;
         font-variant-numeric: tabular-nums;
@@ -227,29 +246,37 @@
       .prize-rank {
         color: #e5e7eb;
         font-weight: 700;
-        font-size: calc(clamp(0.95rem, 2.1vw, 1.15rem) * var(--ls));
+        font-size: calc(1.15rem * var(--ls));
         letter-spacing: 0.02em;
       }
       .prize-amount {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 6px;
         color: #ffffff;
         font-weight: 700;
-        font-size: calc(clamp(1rem, 2.3vw, 1.22rem) * var(--ls));
+        font-size: calc(1.22rem * var(--ls));
         font-variant-numeric: tabular-nums;
         margin-left: auto;
       }
+      .prize-extra {
+        font-weight: inherit;
+        font-size: inherit;
+        white-space: nowrap;
+      }
       .prize-item--top .prize-rank {
         color: var(--pink);
-        font-size: calc(clamp(1.08rem, 2.7vw, 1.4rem) * var(--ls));
+        font-size: calc(1.4rem * var(--ls));
       }
       .prize-item--top .prize-amount {
         color: #f5ffd1;
-        font-size: calc(clamp(1.2rem, 3.1vw, 1.75rem) * var(--ls));
+        font-size: calc(1.75rem * var(--ls));
         text-shadow: 0 0 8px rgba(204, 255, 0, 0.28);
       }
       .tourney-info {
         --ls: var(--info-font-scale, var(--left-font-scale, 1));
         margin: 0;
-        font-size: calc(clamp(1.2rem, 3.1vw, 1.75rem) * var(--ls));
+        font-size: calc(1.75rem * var(--ls));
         line-height: 1.45;
         font-weight: 700;
         color: #f5ffd1;
@@ -282,7 +309,7 @@
         flex-direction: row;
         align-items: stretch;
         justify-content: space-between;
-        gap: clamp(12px, 2.5vw, 36px);
+        gap: 36px;
         width: 100%;
         min-height: 0;
         flex-wrap: nowrap;
@@ -294,7 +321,7 @@
         flex-direction: column;
         align-items: center;
         justify-content: flex-start;
-        padding-top: clamp(4px, 1vh, 12px);
+        padding-top: 12px;
         text-align: center;
       }
       .normal-stage-main {
@@ -306,180 +333,15 @@
       }
       .stage-side {
         flex: 0 0 290px;
-        min-width: 250px;
+        min-width: 290px;
         border-left: 1px solid rgba(255, 255, 255, 0.12);
-        padding-left: clamp(18px, 2.9vw, 34px);
+        padding-left: 34px;
         padding-right: 0;
         display: flex;
         flex-direction: column;
         justify-content: center;
         gap: 22px;
         text-align: left;
-      }
-      @media (max-width: 900px) {
-        body {
-          overflow-y: auto;
-        }
-        .tap-inner {
-          flex-wrap: wrap;
-        }
-        .outer-layout {
-          flex-direction: column;
-          align-items: stretch;
-          overflow: visible;
-        }
-        .stage-left {
-          max-width: none;
-          min-height: 160px;
-          max-height: min(36vh, 320px);
-          border-right: none;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-          padding: 0 0 18px 0;
-          justify-content: flex-start;
-          align-self: auto;
-        }
-        .tap-inner {
-          flex-direction: column;
-          align-items: center;
-          justify-content: flex-start;
-        }
-        .stage-side {
-          border-left: none;
-          border-top: 1px solid rgba(255, 255, 255, 0.12);
-          padding-left: 0;
-          padding-top: 20px;
-          width: 100%;
-          max-width: 420px;
-          flex-direction: column;
-          align-items: stretch;
-          gap: 20px;
-        }
-      }
-      @media (max-width: 640px) {
-        body {
-          padding:
-            max(8px, env(safe-area-inset-top, 0px))
-            max(6px, env(safe-area-inset-right, 0px))
-            max(96px, env(safe-area-inset-bottom, 0px))
-            max(6px, env(safe-area-inset-left, 0px));
-          overflow-y: auto;
-        }
-        .timer-page-header {
-          margin-bottom: 2px;
-          padding: 0 4px 0;
-        }
-        .timer-tournament-title {
-          font-size: clamp(1rem, 6vw, 1.45rem);
-        }
-        .outer-layout {
-          width: 100%;
-          max-width: 100%;
-          gap: 8px;
-          overflow: visible;
-        }
-        .stage-left {
-          display: none;
-        }
-        .tap-root {
-          order: 1;
-          width: 100%;
-          flex: 0 0 auto;
-        }
-        .tap-inner {
-          gap: 10px;
-        }
-        .stage-main {
-          width: 100%;
-        }
-        .normal-stage-main {
-          padding: 4px 2px 0;
-        }
-        .timer-header-logo {
-          width: min(44px, 14vw);
-          margin: 6px auto 2px;
-        }
-        .level {
-          font-size: clamp(0.9rem, 4.5vw, 1.2rem);
-          margin: 14px 0 8px;
-          letter-spacing: 0.04em;
-        }
-        .clock {
-          font-size: clamp(3.4rem, 20vw, 5.6rem);
-          margin-bottom: 8px;
-        }
-        .blinds {
-          font-size: clamp(0.88rem, 4.3vw, 1.2rem);
-          margin-bottom: 8px;
-          line-height: 1.22;
-        }
-        .blinds span.lab {
-          display: block;
-          margin-right: 0;
-          margin-bottom: 2px;
-          font-size: inherit;
-          letter-spacing: 0.05em;
-        }
-        .next-level {
-          font-size: clamp(0.78rem, 3.5vw, 0.96rem);
-          line-height: 1.22;
-          margin-top: 4px;
-          padding-inline: 0;
-        }
-        .tap-hint {
-          font-size: 0.56rem;
-          margin-top: 8px;
-        }
-        .stage-side {
-          order: 2;
-          width: 100%;
-          max-width: none;
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 8px;
-          padding-top: 8px;
-        }
-        .metric {
-          min-width: 0;
-          padding: 6px 4px;
-          border-radius: 8px;
-          background: rgba(255, 255, 255, 0.04);
-        }
-        .metric-label {
-          font-size: 0.56rem;
-          margin-bottom: 4px;
-        }
-        .metric-val--sidebar {
-          font-size: 0.88rem;
-          line-height: 1.12;
-          word-break: break-word;
-        }
-        .quick-panel {
-          left: 50%;
-          right: auto;
-          bottom: max(8px, env(safe-area-inset-bottom, 0px));
-          transform: translateX(-50%);
-          width: min(98vw, 430px);
-          max-width: 98vw;
-          gap: 4px;
-          padding: 6px 8px;
-        }
-        .quick-panel-group {
-          gap: 3px;
-          padding: 3px 4px;
-        }
-        .quick-panel-label {
-          font-size: 0.54rem;
-        }
-        .quick-btn {
-          min-width: 28px;
-          height: 28px;
-          font-size: 0.82rem;
-        }
-        .quick-btn--start,
-        .quick-btn--pause,
-        .quick-btn--end {
-          min-width: 48px;
-        }
       }
       @supports not (backdrop-filter: blur(1px)) {
         .timer-pause-overlay {
@@ -501,17 +363,17 @@
       }
       .level {
         width: 100%;
-        margin: clamp(20px, 2.8vh, 28px) 0 clamp(8px, 1.2vh, 12px);
+        margin: 28px 0 12px;
         margin-inline: 0;
         text-align: center;
         color: var(--pink);
-        font-size: clamp(1.45rem, 3.7vw, 2.2rem);
+        font-size: 2.2rem;
         font-weight: 800;
         letter-spacing: 0.12em;
         line-height: 1.1;
       }
       .clock {
-        font-size: clamp(8.5rem, min(38vw, 36vmin), 21rem);
+        font-size: 21rem;
         font-weight: 800;
         font-variant-numeric: tabular-nums;
         margin: 0 0 22px;
@@ -522,7 +384,7 @@
         width: 100%;
         text-align: center;
         margin-bottom: 20px;
-        font-size: clamp(2.1rem, 5.4vw, 3.1rem);
+        font-size: 3.1rem;
         font-weight: 700;
         line-height: 1.35;
       }
@@ -535,11 +397,11 @@
       .next-level {
         box-sizing: border-box;
         width: 100%;
-        max-width: min(52rem, 100%);
+        max-width: 52rem;
         padding-inline: 8px;
         margin-inline: auto;
         text-align: center;
-        font-size: clamp(1.8rem, 4.6vw, 2.5rem);
+        font-size: 2.5rem;
         font-weight: 600;
         color: var(--muted);
         margin-top: 12px;
@@ -573,7 +435,7 @@
         font-weight: 700;
       }
       .break-top-clock {
-        font-size: clamp(2rem, 7vw, 3.5rem);
+        font-size: 3.5rem;
         font-weight: 800;
         font-variant-numeric: tabular-nums;
         color: var(--cyan);
@@ -587,7 +449,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: min(52vh, 520px);
+        min-height: 520px;
         padding: 8px 4px;
       }
       .break-video-stage.is-hidden {
@@ -599,7 +461,7 @@
         height: auto;
         max-width: 100%;
         min-width: 0;
-        max-height: min(68vh, 720px);
+        max-height: 720px;
         object-fit: contain;
         border-radius: 10px;
         background: #0a0a0a;
@@ -616,13 +478,13 @@
         margin-bottom: 6px;
       }
       .metric-val {
-        font-size: clamp(2.2rem, 6.5vw, 3.6rem);
+        font-size: 3.6rem;
         font-weight: 800;
         font-variant-numeric: tabular-nums;
         color: var(--text);
       }
       .metric-val--sidebar {
-        font-size: clamp(1.35rem, 4vw, 2.35rem);
+        font-size: 2.35rem;
         font-weight: 800;
         font-variant-numeric: tabular-nums;
         color: #d4d4d8;
@@ -647,7 +509,7 @@
         color: #b45353;
       }
       .quick-zone {
-        position: fixed;
+        position: absolute;
         left: 0;
         right: 0;
         bottom: 0;
@@ -656,9 +518,9 @@
         pointer-events: none;
       }
       .quick-panel {
-        position: fixed;
+        position: absolute;
         left: 50%;
-        bottom: max(8px, env(safe-area-inset-bottom, 0px));
+        bottom: 8px;
         transform: translate(-50%, 52%);
         transition: transform 0.22s ease, opacity 0.22s ease;
         opacity: 0.56;
@@ -670,7 +532,7 @@
         flex-wrap: wrap;
         gap: 8px;
         justify-content: center;
-        max-width: min(97vw, 1120px);
+        max-width: 1120px;
         width: max-content;
         z-index: 99999 !important;
         pointer-events: auto;
@@ -736,17 +598,24 @@
         min-width: 58px;
       }
       .cloud-sync-badge {
-        position: fixed;
-        top: max(10px, env(safe-area-inset-top, 0px));
-        right: max(10px, env(safe-area-inset-right, 0px));
+        position: absolute;
+        top: 10px;
+        right: 10px;
         z-index: 60;
         pointer-events: none;
         backdrop-filter: blur(6px);
         background: rgba(0, 0, 0, 0.55);
       }
+      .timer-stage .timer-pause-overlay {
+        position: absolute;
+      }
+      .timer-stage .timer-pause-overlay-label {
+        font-size: 12rem;
+      }
     </style>
   </head>
   <body>
+    <div id="timer-stage" class="timer-stage">
     <div
       id="cloud-sync-badge"
       class="cloud-sync-badge"
@@ -882,6 +751,27 @@
         <button type="button" class="quick-btn quick-btn--end" data-quick="end">END</button>
       </div>
     </div>
+    </div>
+
+    <script>
+      (function () {
+        var DESIGN_W = 1920;
+        var DESIGN_H = 1080;
+        function fitTimerStage() {
+          var stage = document.getElementById("timer-stage");
+          if (!stage) return;
+          var scale = Math.min(
+            window.innerWidth / DESIGN_W,
+            window.innerHeight / DESIGN_H
+          );
+          stage.style.transform =
+            "translate(-50%, -50%) scale(" + scale + ")";
+        }
+        window.addEventListener("resize", fitTimerStage);
+        window.addEventListener("orientationchange", fitTimerStage);
+        fitTimerStage();
+      })();
+    </script>
 
     <script>window.__METIS_ASSET_V = "20260726f";</script>
     <script type="module" src="firebase.js?v=20260726f"></script>
@@ -974,17 +864,11 @@
               if (!item || typeof item !== "object") return null;
               var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
               var amount = parsePrizeAmountNumber(item.amount);
-              if (!rank || !amount) return null;
               var extraPrize = String(item.extraPrize != null ? item.extraPrize : "").trim();
+              if (!rank || (!amount && !extraPrize)) return null;
               return { rank: rank, amount: amount, extraPrize: extraPrize };
             })
             .filter(Boolean);
-        }
-
-        function displayPrizeAmountText(item) {
-          var amountText = formatPrizeAmount(item.amount);
-          var extra = item.extraPrize ? String(item.extraPrize).trim() : "";
-          return extra ? amountText + " " + extra : amountText;
         }
 
         function displayPrizeBlockHtml(s) {
@@ -993,6 +877,15 @@
             return items
               .map(function (item, idx) {
                 var topClass = idx < 3 ? " prize-item--top" : "";
+                var extra = item.extraPrize ? String(item.extraPrize).trim() : "";
+                var amountHtml = item.amount
+                  ? '<span class="prize-amount-value">' +
+                    escapeHtml(formatPrizeAmount(item.amount)) +
+                    "</span>"
+                  : "";
+                var extraHtml = extra
+                  ? '<span class="prize-extra">' + escapeHtml(extra) + "</span>"
+                  : "";
                 return (
                   '<div class="prize-item' +
                   topClass +
@@ -1001,7 +894,8 @@
                   escapeHtml(item.rank) +
                   "</span>" +
                   '<span class="prize-amount">' +
-                  escapeHtml(displayPrizeAmountText(item)) +
+                  amountHtml +
+                  extraHtml +
                   "</span>" +
                   "</div>"
                 );
