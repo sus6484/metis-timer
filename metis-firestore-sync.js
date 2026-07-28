@@ -1020,7 +1020,8 @@ function normalizePresetForFs(preset) {
             var extraPrize = String(item.extraPrize != null ? item.extraPrize : "")
               .trim()
               .slice(0, 48);
-            if (!rank || (!amountNum && !extraPrize)) return null;
+            // 금액이 없어도 extraPrize가 있으면 Firebase/로컬에 유지
+            if (!rank || !(amountNum > 0 || extraPrize)) return null;
             return {
               rank: rank,
               amount: amountNum,
@@ -1472,7 +1473,18 @@ function applyPresetsSnapshot(snapshot) {
             String(p.tournamentInfo || ""),
             String(p.totalPrizeText || ""),
             String(p.prizeText || ""),
-            Array.isArray(p.prizeItems) ? p.prizeItems.length : 0,
+            Array.isArray(p.prizeItems)
+              ? p.prizeItems
+                  .map(function (it) {
+                    if (!it || typeof it !== "object") return "";
+                    return [
+                      String(it.rank || ""),
+                      String(it.amount != null ? it.amount : ""),
+                      String(it.extraPrize || ""),
+                    ].join("|");
+                  })
+                  .join(";")
+              : "",
             Number(p.entryChips) || 0,
             Number(p.infoFontScale) || 1,
             Number(p.prizeFontScale) || 1,

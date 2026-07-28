@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <title>Metis — 타이머</title>
-    <link rel="stylesheet" href="styles.css?v=20260726f" />
+    <link rel="stylesheet" href="styles.css?v=20260728a" />
     <style>
       :root {
         color-scheme: dark;
@@ -184,7 +184,7 @@
       .left-carousel.is-rotating.is-view-prize .prize-val {
         flex: 1 1 auto;
         min-height: 0;
-        overflow-x: hidden;
+        overflow-x: visible;
         overflow-y: auto;
         scrollbar-width: thin;
         scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
@@ -229,7 +229,8 @@
         flex-direction: column;
         gap: 6px;
         max-height: none;
-        overflow: hidden;
+        overflow-x: visible;
+        overflow-y: hidden;
         padding-right: 0;
         font-size: calc(1rem * var(--ls));
         line-height: 1.35;
@@ -240,10 +241,12 @@
         align-items: baseline;
         justify-content: flex-start;
         gap: 10px;
+        min-width: 0;
         white-space: normal;
         word-break: break-word;
       }
       .prize-rank {
+        flex: 0 0 auto;
         color: #e5e7eb;
         font-weight: 700;
         font-size: calc(1.15rem * var(--ls));
@@ -252,14 +255,24 @@
       .prize-amount {
         display: inline-flex;
         align-items: baseline;
-        gap: 6px;
+        justify-content: flex-end;
+        flex: 0 1 auto;
+        flex-wrap: wrap;
+        gap: 4px;
+        min-width: 0;
+        max-width: 100%;
         color: #ffffff;
         font-weight: 700;
         font-size: calc(1.22rem * var(--ls));
         font-variant-numeric: tabular-nums;
         margin-left: auto;
       }
+      .prize-amount-value {
+        min-width: 0;
+      }
       .prize-extra {
+        flex-shrink: 0;
+        color: inherit;
         font-weight: inherit;
         font-size: inherit;
         white-space: nowrap;
@@ -773,9 +786,9 @@
       })();
     </script>
 
-    <script>window.__METIS_ASSET_V = "20260726f";</script>
-    <script type="module" src="firebase.js?v=20260726f"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260726f"></script>
+    <script>window.__METIS_ASSET_V = "20260728a";</script>
+    <script type="module" src="firebase.js?v=20260728a"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260728a"></script>
     <script>
       (function () {
         function startBoot() {
@@ -865,7 +878,8 @@
               var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
               var amount = parsePrizeAmountNumber(item.amount);
               var extraPrize = String(item.extraPrize != null ? item.extraPrize : "").trim();
-              if (!rank || (!amount && !extraPrize)) return null;
+              // 기본 금액이 0이어도 extraPrize가 있으면 해당 등수 유지
+              if (!rank || !(amount > 0 || extraPrize)) return null;
               return { rank: rank, amount: amount, extraPrize: extraPrize };
             })
             .filter(Boolean);
@@ -878,14 +892,17 @@
               .map(function (item, idx) {
                 var topClass = idx < 3 ? " prize-item--top" : "";
                 var extra = item.extraPrize ? String(item.extraPrize).trim() : "";
-                var amountHtml = item.amount
+                var hasAmount = item.amount > 0;
+                var amountHtml = hasAmount
                   ? '<span class="prize-amount-value">' +
                     escapeHtml(formatPrizeAmount(item.amount)) +
                     "</span>"
                   : "";
+                // 추가 보상은 금액 유무와 무관하게 DOM에 삽입
                 var extraHtml = extra
                   ? '<span class="prize-extra">' + escapeHtml(extra) + "</span>"
                   : "";
+                if (!amountHtml && !extraHtml) return "";
                 return (
                   '<div class="prize-item' +
                   topClass +
@@ -900,6 +917,7 @@
                   "</div>"
                 );
               })
+              .filter(Boolean)
               .join("");
           }
           var raw =

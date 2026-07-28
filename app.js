@@ -1435,7 +1435,8 @@
         var rank = String(item.rank != null ? item.rank : "").trim().slice(0, 24);
         var amountNum = parsePrizeAmountNumber(item.amount);
         var extraPrize = normalizeExtraPrize(item.extraPrize);
-        if (!rank || (!amountNum && !extraPrize)) return null;
+        // 금액이 없어도 extraPrize 텍스트가 있으면 유효한 행으로 저장
+        if (!rank || !(amountNum > 0 || extraPrize)) return null;
         return {
           rank: rank,
           amount: amountNum,
@@ -1484,7 +1485,7 @@
         : "";
       var amount = amountDigits ? Math.max(0, Math.floor(Number(amountDigits) || 0)) : 0;
       var extraPrize = extraInput ? normalizeExtraPrize(extraInput.value) : "";
-      if (!rank || (!amount && !extraPrize)) return;
+      if (!rank || !(amount > 0 || extraPrize)) return;
       out.push({ rank: rank, amount: amount, extraPrize: extraPrize });
     });
     return out;
