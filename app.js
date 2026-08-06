@@ -2107,11 +2107,24 @@
       );
       cell.appendChild(
         mkBtn("타이머 열기", "purple", function () {
-          window.open(
-            "timer.html?id=" + encodeURIComponent(p.id),
-            "metisTimer_" + p.id,
-            "noopener,noreferrer,width=1200,height=800"
-          );
+          var assetV =
+            (window.__METIS_ASSET_V != null && String(window.__METIS_ASSET_V)) ||
+            String(Date.now());
+          var url =
+            "timer.html?id=" +
+            encodeURIComponent(p.id) +
+            "&v=" +
+            encodeURIComponent(assetV);
+          var name = "metisTimer_" + p.id;
+          var w = window.open(url, name, "width=1200,height=800");
+          if (w) {
+            try {
+              w.location.href = url;
+              w.focus();
+            } catch (e) {
+              /* ignore */
+            }
+          }
         })
       );
       cell.appendChild(

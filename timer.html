@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <title>Metis — 타이머</title>
-    <link rel="stylesheet" href="styles.css?v=20260806a" />
+    <link rel="stylesheet" href="styles.css?v=20260806b" />
     <style>
       :root {
         color-scheme: dark;
@@ -504,17 +504,19 @@
         letter-spacing: 0.02em;
       }
       .metric--avgstack {
-        display: flex;
-        flex-direction: column;
+        display: flex !important;
+        flex-direction: column !important;
         align-items: flex-start;
+        gap: 2px;
       }
       .metric--avgstack .metric-val {
+        display: block;
         line-height: 1.15;
         white-space: nowrap;
       }
       .metric-val-bb {
-        display: block;
-        margin-top: 2px;
+        display: block !important;
+        margin-top: 0;
         color: var(--pink);
         text-shadow: 0 0 8px rgba(204, 255, 0, 0.28);
         font-size: 1.55rem;
@@ -720,8 +722,8 @@
             </div>
             <div class="metric metric--avgstack">
               <span class="metric-label">AVG STACK</span>
-              <span class="metric-val metric-val--sidebar" id="el-m-avg">0</span>
-              <span class="metric-val-bb" id="el-m-avg-bb">(0.0 BB)</span>
+              <div class="metric-val metric-val--sidebar" id="el-m-avg">0</div>
+              <div class="metric-val-bb" id="el-m-avg-bb">(0.0 BB)</div>
             </div>
             <div class="metric">
               <span class="metric-label metric-label--break">NEXT BREAK</span>
@@ -794,9 +796,9 @@
       })();
     </script>
 
-    <script>window.__METIS_ASSET_V = "20260806a";</script>
-    <script type="module" src="firebase.js?v=20260806a"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260806a"></script>
+    <script>window.__METIS_ASSET_V = "20260806b";</script>
+    <script type="module" src="firebase.js?v=20260806b"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260806b"></script>
     <script>
       (function () {
         function startBoot() {
