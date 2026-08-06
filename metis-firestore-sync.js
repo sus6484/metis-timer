@@ -635,6 +635,46 @@ function applyTimerControlToLocal(presetId, raw) {
     return false;
   }
 
+  // 로컬이 이미 스케줄 종료인데 동일/이전 세대의 재생 중 클라우드면 무시
+  // (레벨 만료 → 디바운스 PUSH 전에 stale 스냅샷이 덮어 처음부터 반복되던 레이스)
+  var localFinished =
+    (state.timerStatus || "") === "종료" &&
+    !(
+      state.timer &&
+      (state.timer.isRunning ||
+        (state.timer.bridge && state.timer.bridge.kind))
+    );
+  var cloudPlaying = MetisTimer.isEffectivelyPlayingSlice
+    ? MetisTimer.isEffectivelyPlayingSlice(cloudSlice)
+    : !!(
+        cloudSlice.timer &&
+        (cloudSlice.timer.isRunning ||
+          (cloudSlice.timer.bridge && cloudSlice.timer.bridge.kind))
+      );
+  if (localFinished && cloudPlaying && remoteLA <= localLA) {
+    console.log("[MetisFirestore|PULL|applyTimerControl:로컬종료보호]", {
+      localLA: localLA,
+      remoteLA: remoteLA,
+      cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
+    });
+    return false;
+  }
+
+  // 동일 조작 세대에서 로컬 진행도가 더 앞서면(낙관적 레벨 만료) 클라우드 롤백 거부
+  if (
+    remoteLA === localLA &&
+    localSlice &&
+    MetisTimer.timerGameplayRank &&
+    MetisTimer.timerGameplayRank(localSlice) >
+      MetisTimer.timerGameplayRank(cloudSlice) + 5
+  ) {
+    console.log("[MetisFirestore|PULL|applyTimerControl:로컬진행도우선]", {
+      localRank: MetisTimer.timerGameplayRank(localSlice),
+      cloudRank: MetisTimer.timerGameplayRank(cloudSlice),
+    });
+    return false;
+  }
+
   // 동일 조작 세대 + 제어 시그니처 동일 = display/heartbeat 잔여 스냅샷 → 스킵
   // (과거 3초 heartbeat 문서가 남아 있어도 읽기→재적용 루프를 끊는다)
   if (
@@ -661,9 +701,10 @@ function applyTimerControlToLocal(presetId, raw) {
   var prevLevel =
     state.timer && state.timer.levelIndex != null ? state.timer.levelIndex : 0;
 
-  // Firestore 우선: remoteLA >= localLA 이면 강제 적용 (LWW)
+  // Firestore 우선: 클라우드 조작이 더 최신일 때만 강제 적용
+  // (동일 LA 는 forceApply 금지 — 낙관적 레벨 만료/종료를 낡은 스냅샷이 덮지 않게)
   var applied = MetisTimer.applyTimerSyncSlice(state, cloudSlice, {
-    forceApply: remoteLA >= localLA,
+    forceApply: remoteLA > localLA,
   });
 
   if (!applied) {

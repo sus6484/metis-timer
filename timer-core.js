@@ -433,7 +433,6 @@
     }
     copyPresetBoundConfigIntoState(state, preset);
     state.timer = normalizeTimer(state.timer, state);
-    ensureTotalSecondsState(state);
     syncLevelField(state);
     writeSyncState(state, { skipCloudPush: true, skipPresetEmbed: true });
     return true;
@@ -470,7 +469,6 @@
     copyPresetMetadataIntoState(state, preset);
     copyPresetBoundConfigIntoState(state, preset);
     state.timer = normalizeTimer(state.timer, state);
-    ensureTotalSecondsState(state);
     syncLevelField(state);
     writeSyncState(state, { skipPresetEmbed: true });
     return true;
@@ -536,7 +534,6 @@
           delete state.earlyChips;
           mergePresetsIntoState(state);
           state.timer = normalizeTimer(state.timer, state);
-          ensureTotalSecondsState(state);
           syncLevelField(state);
         } else {
           state = buildInitialTimerState();
@@ -597,31 +594,6 @@
     var m = Number(level && level.minutes);
     if (!Number.isFinite(m) || m <= 0) m = 20;
     return Math.max(1, Math.round(m * 60));
-  }
-
-  function isPlayLevelRunning(state, timerObj) {
-    if (!state || !timerObj || !timerObj.isRunning || timerObj.bridge) return false;
-    var levels = getActiveLevels(state);
-    if (!levels || !levels.length) return false;
-    var idx = clamp(parseInt(timerObj.levelIndex, 10) || 0, 0, levels.length - 1);
-    return !isBreakRow(levels[idx]);
-  }
-
-  function ensureTotalSecondsState(state) {
-    if (!state || typeof state !== "object") return;
-    if ("totalActiveMs" in state) delete state.totalActiveMs;
-    if ("totalActiveAnchorMs" in state) delete state.totalActiveAnchorMs;
-    state.totalSeconds = 0;
-    state.totalSecondsTickAt = null;
-  }
-
-  function syncTotalSeconds(state, now) {
-    ensureTotalSecondsState(state);
-  }
-
-  function getTotalSeconds(state) {
-    ensureTotalSecondsState(state);
-    return 0;
   }
 
   function formatMMSS(totalSec) {
@@ -686,7 +658,6 @@
       mergeActivePresetMetadataIntoState(state);
       mergeActivePresetBoundConfigIntoState(state);
       state.timer = normalizeTimer(state.timer, state);
-      ensureTotalSecondsState(state);
       syncLevelField(state);
       reconcileRunningEndAt(state, syncedNow());
       return state;
@@ -968,7 +939,6 @@
     copyCloudSliceOntoState(state, cloudSlice);
     syncLevelField(state);
     reconcileRunningEndAt(state, syncedNow());
-    ensureTotalSecondsState(state);
     state.displayTime = formatMMSS(remainingSec(state, syncedNow()));
   }
 
@@ -991,6 +961,19 @@
         curSU,
         curLA
       );
+      // 레벨 만료·스케줄 종료는 heartbeat가 아니라 제어 전이 — LWW 보호를 위해 LA 갱신
+      if (options.bumpControlAction) {
+        state.lastActionTimestamp = now;
+        state.controlUpdatedAt = now;
+        state.timerUpdatedAt = now;
+        state.updatedAt = Math.max(now, curSU);
+        syncDbg("PUSH", "assignSyncTimestamps:controlAdvance", {
+          lastActionTimestamp: state.lastActionTimestamp,
+          timerStatus: state.timerStatus,
+          levelIndex: state.timer && state.timer.levelIndex,
+        });
+        return;
+      }
       syncDbg("PUSH", "assignSyncTimestamps:tick", {
         autoTick: !!options.autoTick,
         cloudHeartbeat: !!options.cloudHeartbeat,
@@ -1155,6 +1138,10 @@
     var t = slice.timer;
     if (!t) return slice.hasStartedOnce ? 1 : 0;
     var levelIdx = Math.max(0, parseInt(t.levelIndex, 10) || 0);
+    // 스케줄 종료는 진행 중 롤백(특히 1레벨 재시작)보다 항상 우선
+    if ((slice.timerStatus || "") === "종료") {
+      return 500 + levelIdx * 10;
+    }
     if (t.isRunning || t.bridge) {
       return 100 + levelIdx * 10 + (t.isRunning ? 1 : 0);
     }
@@ -1405,11 +1392,15 @@
         var pushControl =
           isUserSyncAction(options) || !!options.autoTick;
         if (pushControl && !options.cloudHeartbeat) {
-          var controlSlice = options.autoTick
-            ? pickTimerHeartbeatSlice(state, pushPresetId)
-            : pickTimerSyncSlice(state, pushPresetId);
+          // 레벨 만료·종료는 전체 슬라이스로 즉시 푸시 (디바운스/부분 하트비트로
+          // 낡은 재생 상태가 로컬 종료를 덮어 처음부터 반복되는 레이스 방지)
+          var controlAdvance = !!options.bumpControlAction;
+          var controlSlice =
+            options.autoTick && !controlAdvance
+              ? pickTimerHeartbeatSlice(state, pushPresetId)
+              : pickTimerSyncSlice(state, pushPresetId);
           global.MetisFirestoreSync.saveTimerControl(pushPresetId, controlSlice, {
-            urgent: isUserSyncAction(options),
+            urgent: isUserSyncAction(options) || controlAdvance,
             // autoTick = 레벨/브리지 상태 전이. display heartbeat 가 아님.
             heartbeat: false,
           });
@@ -1479,7 +1470,6 @@
       state.timer.levelIndex = 0;
       state.timer.pausedRemainingSec = dur;
     }
-    ensureTotalSecondsState(state);
     syncLevelField(state);
     return state;
   }
@@ -1527,7 +1517,6 @@
    * 현재 레벨 남은 시간을 프리셋 풀타임으로 맞추고 정지(대기). 진행 중이면 먼저 멈춘 뒤 리셋.
    */
   function applyLevelRefresh(state, now) {
-    syncTotalSeconds(state, now);
     var levels = getActiveLevels(state);
     if (!levels || !levels.length) {
       state.timerStatus = "프리셋 없음";
@@ -1615,7 +1604,6 @@
   }
 
   function applyPause(state, now) {
-    syncTotalSeconds(state, now);
     var t = normalizeTimer(state.timer, state);
     state.timer = t;
     if (t.bridge && Number.isFinite(t.bridge.until)) {
@@ -1748,6 +1736,14 @@
     var t = normalizeTimer(state.timer, state);
     state.timer = t;
     var levels = getActiveLevels(state);
+    // 이미 스케줄 종료면 재개하지 않음 (클라우드 롤백·중복 틱 방어)
+    if ((state.timerStatus || "") === "종료" && !t.isRunning && !t.bridge) {
+      t.endAt = null;
+      t.pausedRemainingSec = 0;
+      syncLevelField(state);
+      state.displayTime = "00:00";
+      return { state: state, advanced: false, finished: true, leveledUp: false };
+    }
     if (!canOwn || !levels || !levels.length) {
       syncLevelField(state);
       state.displayTime = formatMMSS(remainingSec(state, now));
@@ -1860,9 +1856,6 @@
     var canOwn = shouldOwnEngine(Date.now());
     var t = normalizeTimer(s.timer, s);
     s.timer = t;
-    var totalSecBefore = getTotalSeconds(s);
-    if (canOwn) syncTotalSeconds(s, now);
-    var totalSecAfter = getTotalSeconds(s);
 
     var bridgeCompleted = null;
     if (
@@ -1874,7 +1867,11 @@
       bridgeCompleted = t.bridge.kind;
       t.bridge = null;
       applyResume(s, now);
-      writeSyncState(s, { skipPresetEmbed: true, autoTick: true });
+      writeSyncState(s, {
+        skipPresetEmbed: true,
+        autoTick: true,
+        bumpControlAction: true,
+      });
       return {
         state: s,
         advanced: false,
@@ -1888,13 +1885,10 @@
 
     var res = tickExpire(s, now, canOwn);
     if (res.advanced) {
-      writeSyncState(res.state, { skipPresetEmbed: true, autoTick: true });
-    } else if (canOwn && totalSecAfter !== totalSecBefore) {
-      // totalSeconds 변경은 로컬만 — Firestore 푸시 금지 (초당 쓰기 방지)
       writeSyncState(res.state, {
         skipPresetEmbed: true,
-        skipCloudPush: true,
         autoTick: true,
+        bumpControlAction: true,
       });
     }
     var live = res.state;
@@ -1952,7 +1946,6 @@
     notifyLocalSyncListeners: notifyLocalSyncListeners,
     syncLevelField: syncLevelField,
     normalizeTimer: normalizeTimer,
-    getTotalSeconds: getTotalSeconds,
     engineStep: engineStep,
     pickRemoteSlice: pickRemoteSlice,
     TIMER_SYNC_KEYS: TIMER_SYNC_KEYS,

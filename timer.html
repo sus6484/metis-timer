@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <title>Metis — 타이머</title>
-    <link rel="stylesheet" href="styles.css?v=20260728a" />
+    <link rel="stylesheet" href="styles.css?v=20260806a" />
     <style>
       :root {
         color-scheme: dark;
@@ -700,10 +700,6 @@
               <span class="metric-val metric-val--sidebar" id="el-m-players">0 / 0</span>
             </div>
             <div class="metric">
-              <span class="metric-label">TOTAL TIME</span>
-              <span class="metric-val metric-val--sidebar metric-val--mono" id="el-m-totaltime">00:00:00</span>
-            </div>
-            <div class="metric">
               <span class="metric-label">REG CLOSE</span>
               <span class="metric-val metric-val--sidebar metric-val--mono" id="el-m-regclose">—</span>
             </div>
@@ -786,9 +782,9 @@
       })();
     </script>
 
-    <script>window.__METIS_ASSET_V = "20260728a";</script>
-    <script type="module" src="firebase.js?v=20260728a"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260728a"></script>
+    <script>window.__METIS_ASSET_V = "20260806a";</script>
+    <script type="module" src="firebase.js?v=20260806a"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260806a"></script>
     <script>
       (function () {
         function startBoot() {
@@ -1189,13 +1185,6 @@
           );
         }
 
-        /** 진행 중 레벨·브레이크 모두 누적. bridge(대기 타이머·시작 준비)·일시정지(isRunning false)는 제외 */
-        function shouldCountTotalTime(s, tn, levels, currentRow) {
-          if (!s || !tn || !tn.isRunning || tn.bridge) return false;
-          if (!levels || !levels.length || !currentRow) return false;
-          return true;
-        }
-
         /** REG CLOSE·NEXT BREAK는 본 타이머(레벨 진행) 중에만 카운트. 대기·시작 준비 bridge 중에는 정지 */
         function shouldRunScheduleClocks(s, tn) {
           if (!s || !tn) return false;
@@ -1209,56 +1198,6 @@
             return false;
           }
           return true;
-        }
-
-        /** 레벨 임의 이동 시 건너뛴 구간을 토탈에 반영. 시작 전·일시정지 wall time은 제외, 건너뛴 레벨 잔여·중간 구간은 포함 */
-        function creditSkippedLevelSeconds(fromIdx, toIdx, levels, remBeforeSkip, started) {
-          if (!started || !levels || !levels.length || toIdx <= fromIdx) return;
-          var credit = Math.max(0, Math.floor(Number(remBeforeSkip) || 0));
-          for (var k = fromIdx + 1; k < toIdx; k++) {
-            credit += MetisTimer.levelDurationSec(levels[k]);
-          }
-          if (credit > 0) {
-            totalSeconds += credit;
-            totalMsCarry = 0;
-          }
-        }
-
-        function updateTotalTime(step, tn, levels, currentRow) {
-          var now =
-            typeof step.now === "number"
-              ? step.now
-              : MetisTimer.now
-                ? MetisTimer.now()
-                : Date.now();
-          if (totalLastNow == null) totalLastNow = now;
-
-          var isResetState =
-            (step.state.timerStatus || "") === "대기중" &&
-            !tn.isRunning &&
-            !tn.bridge &&
-            Number(step.state.totalSeconds || 0) === 0;
-          if (isResetState) {
-            totalSeconds = 0;
-            totalMsCarry = 0;
-            totalLastNow = now;
-            lastTrackedScheduleIdx = null;
-            lastTrackedRem = 0;
-            return;
-          }
-
-          if (shouldCountTotalTime(step.state, tn, levels, currentRow)) {
-            var delta = Math.max(0, now - totalLastNow);
-            totalMsCarry += delta;
-            if (totalMsCarry >= 1000) {
-              var gain = Math.floor(totalMsCarry / 1000);
-              totalSeconds += gain;
-              totalMsCarry -= gain * 1000;
-            }
-          } else {
-            totalMsCarry = 0;
-          }
-          totalLastNow = now;
         }
 
         function getActivePresetFromState(s) {
@@ -1364,12 +1303,6 @@
         var lastSeenUpdated = 0;
         var prevBridgeSecExact = null;
         var prevLevelSecExact = null;
-        var totalSeconds = 0;
-        var totalMsCarry = 0;
-        var totalLastNow = null;
-        var lastTrackedScheduleIdx = null;
-        var lastTrackedRem = 0;
-        var suppressSkipCreditOnce = false;
         var transitionTickMarks = {};
         var bridgeTickMarks = {};
         var audioUnlockBound = false;
@@ -1492,11 +1425,20 @@
             !!(s.pendingBridge && s.pendingBridge.kind === "preWait");
 
           var paused = (s.timerStatus || "") === "일시정지";
+          var ended = (s.timerStatus || "") === "종료";
+          var showOverlay = paused || ended;
           var ov = $("pause-overlay");
-          if (ov && lastPausedOverlay !== paused) {
-            lastPausedOverlay = paused;
-            ov.classList.toggle("is-visible", paused);
-            ov.setAttribute("aria-hidden", paused ? "false" : "true");
+          var ovLabel = ov
+            ? ov.querySelector(".timer-pause-overlay-label")
+            : null;
+          var overlayKey = ended ? "ended" : paused ? "paused" : "off";
+          if (ov && lastPausedOverlay !== overlayKey) {
+            lastPausedOverlay = overlayKey;
+            ov.classList.toggle("is-visible", showOverlay);
+            ov.setAttribute("aria-hidden", showOverlay ? "false" : "true");
+            if (ovLabel) {
+              ovLabel.textContent = ended ? "종료" : "Ⅱ PAUSED";
+            }
           }
 
           htmlIf("el-prize", displayPrizeBlockHtml(s));
@@ -1614,25 +1556,6 @@
           var en = s.entry != null ? s.entry : 0;
           textIf("el-m-players", pl + " / " + en);
           var idxSchedule = tn.levelIndex;
-          if (
-            lastTrackedScheduleIdx != null &&
-            idxSchedule !== lastTrackedScheduleIdx &&
-            !suppressSkipCreditOnce &&
-            idxSchedule > lastTrackedScheduleIdx
-          ) {
-            creditSkippedLevelSeconds(
-              lastTrackedScheduleIdx,
-              idxSchedule,
-              levels,
-              lastTrackedRem,
-              !!s.hasStartedOnce
-            );
-          }
-          suppressSkipCreditOnce = false;
-          updateTotalTime(step, tn, levels, L);
-          textIf("el-m-totaltime", formatDurationHMS(totalSeconds));
-          lastTrackedScheduleIdx = idxSchedule;
-          lastTrackedRem = rem;
           if (shouldRunScheduleClocks(s, tn)) {
             applyRegCloseDisplay($("el-m-regclose"), s, levels, idxSchedule, rem, tNow, true);
           } else {
@@ -1735,7 +1658,6 @@
           lastActiveBridgeKind = curBridgeKind;
 
           if (step.leveledUp) {
-            suppressSkipCreditOnce = true;
             resetTransitionCues();
             playTransitionDoorong();
             prevLevelSecExact = null;
@@ -1768,7 +1690,6 @@
           refreshFromBroadcast();
           var detail = ev && ev.detail ? ev.detail : null;
           if (detail && detail.leveledUp) {
-            suppressSkipCreditOnce = true;
             resetTransitionCues();
             playTransitionDoorong();
             prevLevelSecExact = null;
@@ -1999,8 +1920,6 @@
             s.hasStartedOnce = false;
             s.timerStatus = "대기중";
             s.regCloseAt = null;
-            s.totalSeconds = 0;
-            s.totalSecondsTickAt = null;
             s.level = 1;
             if (levels && levels.length) {
               s.timer.levelIndex = 0;
@@ -2158,7 +2077,6 @@
               info.result &&
               info.result.leveledUp
             ) {
-              suppressSkipCreditOnce = true;
               resetTransitionCues();
               playTransitionDoorong();
               prevLevelSecExact = null;

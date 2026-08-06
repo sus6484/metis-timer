@@ -2660,8 +2660,6 @@
     s.level = 1;
     s.regCloseAt = null;
     if (typeof s.totalScheduleCommittedSec === "number") s.totalScheduleCommittedSec = 0;
-    s.totalSeconds = 0;
-    s.totalSecondsTickAt = null;
 
     if (levels && levels.length) {
       s.timer.levelIndex = 0;
