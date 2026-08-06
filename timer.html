@@ -503,14 +503,25 @@
         color: #d4d4d8;
         letter-spacing: 0.02em;
       }
-      .metric-val--avgbb {
-        line-height: 1.35;
-        white-space: normal;
+      .metric--avgstack {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .metric--avgstack .metric-val {
+        line-height: 1.15;
+        white-space: nowrap;
       }
       .metric-val-bb {
+        display: block;
+        margin-top: 2px;
         color: var(--pink);
         text-shadow: 0 0 8px rgba(204, 255, 0, 0.28);
-        font-size: 0.88em;
+        font-size: 1.55rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        line-height: 1.2;
+        white-space: nowrap;
       }
       .metric-val--mono {
         font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
@@ -707,9 +718,10 @@
               <span class="metric-label">TOTAL STACK</span>
               <span class="metric-val metric-val--sidebar" id="el-m-total">0</span>
             </div>
-            <div class="metric">
+            <div class="metric metric--avgstack">
               <span class="metric-label">AVG STACK</span>
-              <span class="metric-val metric-val--sidebar metric-val--avgbb" id="el-m-avg">0</span>
+              <span class="metric-val metric-val--sidebar" id="el-m-avg">0</span>
+              <span class="metric-val-bb" id="el-m-avg-bb">(0.0 BB)</span>
             </div>
             <div class="metric">
               <span class="metric-label metric-label--break">NEXT BREAK</span>
@@ -1169,20 +1181,14 @@
           return hs + ":" + p2(m) + ":" + p2(secR);
         }
 
-        function formatAvgBbText(avgStack, levelRow) {
+        function formatAvgStackParts(avgStack, levelRow) {
           var avgNum = Math.max(0, Math.floor(Number(avgStack) || 0));
           var avgText = avgNum.toLocaleString("ko-KR");
           var bb = levelRow ? Math.floor(Number(levelRow.bb) || 0) : 0;
-          if (!bb) {
-            return avgText + ' <span class="metric-val-bb">(— BB)</span>';
-          }
-          var bbRatio = Math.round((avgNum / bb) * 10) / 10;
-          return (
-            avgText +
-            ' <span class="metric-val-bb">(' +
-            bbRatio.toFixed(1) +
-            " BB)</span>"
-          );
+          var bbLabel = !bb
+            ? "(— BB)"
+            : "(" + (Math.round((avgNum / bb) * 10) / 10).toFixed(1) + " BB)";
+          return { avgText: avgText, bbLabel: bbLabel };
         }
 
         /** REG CLOSE·NEXT BREAK는 본 타이머(레벨 진행) 중에만 카운트. 대기·시작 준비 bridge 중에는 정지 */
@@ -1565,7 +1571,9 @@
             Math.max(0, Math.floor(Number(en) || 0)) * resolveEntryChipsForState(s);
           textIf("el-m-total", totalStack.toLocaleString("ko-KR"));
           var avgStack = pl > 0 ? Math.floor(totalStack / pl) : 0;
-          htmlIf("el-m-avg", formatAvgBbText(avgStack, L));
+          var avgParts = formatAvgStackParts(avgStack, L);
+          textIf("el-m-avg", avgParts.avgText);
+          textIf("el-m-avg-bb", avgParts.bbLabel);
 
           var scheduleClocksOn = shouldRunScheduleClocks(s, tn);
           var secToBreak = scheduleClocksOn
