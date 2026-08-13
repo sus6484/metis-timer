@@ -1414,6 +1414,16 @@
     }
   }
 
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "visible") return;
+    if (!isSessionOk() || !screenRemote.classList.contains("is-active")) return;
+    MetisTimer.setSyncPresetId(getActivePresetId());
+    var step = MetisTimer.engineStep();
+    if (!step) return;
+    elTimerClock.textContent = MetisTimer.formatMMSS(step.rem);
+    elTimerStatus.textContent = step.state.timerStatus || "대기중";
+  });
+
   function parsePrizeAmountNumber(rawAmount) {
     if (typeof rawAmount === "number") {
       return Math.max(0, Math.floor(Number.isFinite(rawAmount) ? rawAmount : 0));

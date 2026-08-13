@@ -369,6 +369,7 @@ function mergeOneTimerState_(localSlice, remoteSlice) {
     "pendingBridge",
     "regCloseAt",
     "totalScheduleCommittedSec",
+    "levelAdvanceKind",
   ];
   var statsKeys = ["player", "entry", "entryChips"];
 

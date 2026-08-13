@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <title>Metis — 타이머</title>
-    <link rel="stylesheet" href="styles.css?v=20260806b" />
+    <link rel="stylesheet" href="styles.css?v=20260813a" />
     <style>
       :root {
         color-scheme: dark;
@@ -796,9 +796,9 @@
       })();
     </script>
 
-    <script>window.__METIS_ASSET_V = "20260806b";</script>
-    <script type="module" src="firebase.js?v=20260806b"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260806b"></script>
+    <script>window.__METIS_ASSET_V = "20260813a";</script>
+    <script type="module" src="firebase.js?v=20260813a"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260813a"></script>
     <script>
       (function () {
         function startBoot() {
@@ -1030,6 +1030,7 @@
         var breakVideoSessionActive = false;
         var wasBreakUiActive = false;
         var breakLastTimerRun = false;
+        var breakVideoAudioApplied = false;
 
         function pickRandomBreakVideo(excludeSrc) {
           var ex = excludeSrc ? String(excludeSrc) : "";
@@ -1078,6 +1079,7 @@
             vidStage.setAttribute("aria-hidden", "false");
             norm.classList.add("is-hidden");
             textIf("break-remaining-top", MetisTimer.formatMMSS(rem));
+            bindBreakVideoVolumeControls(vid);
 
             if (!wasBreakUiActive) {
               breakVideoSessionActive = true;
@@ -1095,8 +1097,6 @@
             if (timerRunning) {
               if (!wasBreakUiActive || !breakLastTimerRun) {
                 playBreakVideo(vid);
-              } else {
-                applyBreakVideoAudio(vid);
               }
             } else {
               try {
@@ -1113,6 +1113,7 @@
             vidStage.classList.add("is-hidden");
             vidStage.setAttribute("aria-hidden", "true");
             norm.classList.remove("is-hidden");
+            breakVideoAudioApplied = false;
             try {
               vid.pause();
               vid.removeAttribute("src");
@@ -1742,6 +1743,11 @@
         var QUICK_VOL_KEY = "metis_quick_master_volume";
         var MIN_QUICK_VOLUME = 0.35;
         var DEFAULT_QUICK_VOLUME = 1;
+        var BREAK_VIDEO_VOL_KEY = "metis_break_video_volume";
+        var DEFAULT_BREAK_VIDEO_VOLUME = 0.65;
+        var breakVideoUserVolume = DEFAULT_BREAK_VIDEO_VOLUME;
+        var breakVideoUserMuted = false;
+        var breakVideoAudioSyncing = false;
 
         function normalizeQuickVolume(raw) {
           var n = Number(raw);
@@ -1749,26 +1755,91 @@
           return Math.max(MIN_QUICK_VOLUME, Math.min(1, n));
         }
 
+        function clampBreakVideoVolume(raw) {
+          var n = Number(raw);
+          if (!Number.isFinite(n)) return DEFAULT_BREAK_VIDEO_VOLUME;
+          return Math.max(0, Math.min(1, n));
+        }
+
+        function persistBreakVideoAudio() {
+          try {
+            localStorage.setItem(
+              BREAK_VIDEO_VOL_KEY,
+              JSON.stringify({
+                volume: breakVideoUserVolume,
+                muted: breakVideoUserMuted,
+              })
+            );
+          } catch (e) {}
+        }
+
+        function loadBreakVideoVolume() {
+          try {
+            var raw = localStorage.getItem(BREAK_VIDEO_VOL_KEY);
+            if (raw == null || raw === "") return;
+            if (raw.charAt(0) === "{") {
+              var parsed = JSON.parse(raw);
+              breakVideoUserVolume = clampBreakVideoVolume(parsed.volume);
+              breakVideoUserMuted = !!parsed.muted;
+              return;
+            }
+            breakVideoUserVolume = clampBreakVideoVolume(raw);
+          } catch (e) {}
+        }
+
         function applyBreakVideoAudio(vid) {
           if (!vid) return;
-          var master = normalizeQuickVolume(getQuickMasterVolume());
-          vid.muted = false;
-          vid.volume = Math.max(0.4, Math.min(1, 0.65 * master));
+          breakVideoAudioSyncing = true;
+          try {
+            vid.volume = breakVideoUserVolume;
+            vid.muted = breakVideoUserMuted;
+          } catch (e) {}
+          breakVideoAudioSyncing = false;
+        }
+
+        function bindBreakVideoVolumeControls(vid) {
+          if (!vid || vid.dataset.metisVolBound) return;
+          vid.dataset.metisVolBound = "1";
+          function stopVideoBubble(e) {
+            e.stopPropagation();
+          }
+          vid.addEventListener("click", stopVideoBubble);
+          vid.addEventListener("pointerdown", stopVideoBubble);
+          vid.addEventListener("pointerup", stopVideoBubble);
+          vid.addEventListener("mousedown", stopVideoBubble);
+          vid.addEventListener("mouseup", stopVideoBubble);
+          vid.addEventListener("volumechange", function () {
+            if (breakVideoAudioSyncing) return;
+            breakVideoUserVolume = clampBreakVideoVolume(vid.volume);
+            breakVideoUserMuted = !!vid.muted;
+            persistBreakVideoAudio();
+          });
         }
 
         function playBreakVideo(vid) {
           if (!vid) return;
-          applyBreakVideoAudio(vid);
+          bindBreakVideoVolumeControls(vid);
+          if (!breakVideoAudioApplied) {
+            applyBreakVideoAudio(vid);
+            breakVideoAudioApplied = true;
+          }
           var p = vid.play();
           if (p && typeof p.then === "function") {
-            p.then(function () {
-              applyBreakVideoAudio(vid);
-            }).catch(function () {
-              vid.muted = true;
+            p.catch(function () {
+              breakVideoAudioSyncing = true;
+              try {
+                vid.muted = true;
+              } catch (eMute) {}
+              breakVideoAudioSyncing = false;
               var p2 = vid.play();
               if (p2 && typeof p2.then === "function") {
                 p2.then(function () {
-                  applyBreakVideoAudio(vid);
+                  if (breakVideoUserMuted) return;
+                  breakVideoAudioSyncing = true;
+                  try {
+                    vid.muted = false;
+                  } catch (eUnmute) {}
+                  breakVideoAudioSyncing = false;
                 }).catch(function () {});
               }
             });
@@ -1798,8 +1869,6 @@
           try {
             localStorage.setItem(QUICK_VOL_KEY, String(val));
           } catch (e) {}
-          var bv = $("break-video");
-          if (bv) applyBreakVideoAudio(bv);
           updateVolLabel(val);
         }
 
@@ -2006,6 +2075,7 @@
         bindAudioUnlockOnce();
         if (typeof MetisAudio !== "undefined") MetisAudio.unlock();
         loadQuickVolume();
+        loadBreakVideoVolume();
         refreshQuickPanelVisibility();
         window.addEventListener("mousemove", function (e) {
           var bottomBand = 50;
@@ -2043,6 +2113,16 @@
         });
 
         setInterval(tick, MAIN_TICK_MS);
+
+        document.addEventListener("visibilitychange", function () {
+          if (document.visibilityState === "hidden") {
+            MetisTimer.touchTimerWindowHeartbeat();
+            return;
+          }
+          lastHeartbeatAt = 0;
+          lastUi = {};
+          tick();
+        });
 
         MetisTimer.subscribeSync(refreshFromBroadcast);
         window.addEventListener("storage", refreshFromBroadcast);
@@ -2104,6 +2184,13 @@
         }
 
         function clearHb() {
+          if (MetisTimer.clearTimerWindowHeartbeat) {
+            MetisTimer.clearTimerWindowHeartbeat();
+            return;
+          }
+          try {
+            localStorage.removeItem(MetisTimer.getHeartbeatStorageKey());
+          } catch (e0) {}
           try {
             localStorage.removeItem(MetisTimer.HEARTBEAT_KEY);
           } catch (e) {}
@@ -2115,7 +2202,8 @@
           clearHb();
           clearLeftCarousel();
         });
-        window.addEventListener("pagehide", function () {
+        window.addEventListener("pagehide", function (ev) {
+          if (ev && ev.persisted) return;
           clearHb();
           clearLeftCarousel();
           if (window.MetisFirestoreSync) {

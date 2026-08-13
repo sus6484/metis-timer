@@ -7,7 +7,13 @@
   var LEGACY_SYNC_KEY = "metis_timer_sync";
   var HEARTBEAT_KEY = "metis_timer_window_alive";
   var HEARTBEAT_MS = 400;
-  var WINDOW_STALE_MS = 1400;
+  /** 백그라운드 탭 throttling(≥1s)에도 타이머 창 소유권이 바로 넘어가지 않게 */
+  var WINDOW_STALE_MS = 3500;
+  var CLOCK_OFFSET_KEY = "metis_clockOffsetMs";
+  /** 측정 노이즈로 남은 시간이 한꺼번에 점프하지 않게 1회 보정 한도 */
+  var CLOCK_OFFSET_MAX_STEP_MS = 2000;
+  /** 로컬에 아직 1.5초 이상 남았는데 클라우드가 expire로 레벨을 올리면 거부 */
+  var PREMATURE_EXPIRE_GUARD_MS = 1500;
 
   var syncPresetId =
     global.__METIS_TIMER_PRESET_ID != null && global.__METIS_TIMER_PRESET_ID !== ""
@@ -24,22 +30,69 @@
    */
   var clockOffsetMs = 0;
   var clockOffsetUpdatedAt = 0;
+  var clockOffsetInitialized = false;
 
   function syncedNow() {
     return Date.now() + clockOffsetMs;
   }
 
-  function setClockOffsetMs(offsetMs) {
+  function persistClockOffset(offset) {
+    try {
+      localStorage.setItem(CLOCK_OFFSET_KEY, String(offset));
+    } catch (e0) {}
+    if (bc) {
+      try {
+        bc.postMessage({ type: "clockOffset", offset: offset });
+      } catch (e1) {}
+    }
+  }
+
+  function applyClockOffsetMessage(offsetMs) {
+    setClockOffsetMs(offsetMs, { fromStorage: true });
+  }
+
+  /**
+   * @param {number} offsetMs
+   * @param {{ fromStorage?: boolean }=} options fromStorage면 저장/클램프 없이 수용 (다른 탭 값)
+   */
+  function setClockOffsetMs(offsetMs, options) {
+    options = options || {};
     var n = Number(offsetMs);
     if (!Number.isFinite(n)) return;
-    // 비정상적으로 큰 값은 무시 (잘못된 측정 방어)
     if (Math.abs(n) > 24 * 60 * 60 * 1000) return;
-    clockOffsetMs = Math.round(n);
+    n = Math.round(n);
+    if (!options.fromStorage && clockOffsetInitialized) {
+      var delta = n - clockOffsetMs;
+      if (Math.abs(delta) > CLOCK_OFFSET_MAX_STEP_MS) {
+        n =
+          clockOffsetMs +
+          (delta > 0 ? CLOCK_OFFSET_MAX_STEP_MS : -CLOCK_OFFSET_MAX_STEP_MS);
+      }
+    }
+    if (n === clockOffsetMs) {
+      clockOffsetUpdatedAt = Date.now();
+      return;
+    }
+    clockOffsetMs = n;
     clockOffsetUpdatedAt = Date.now();
+    clockOffsetInitialized = true;
+    if (!options.fromStorage) persistClockOffset(n);
   }
 
   function getClockOffsetMs() {
     return clockOffsetMs;
+  }
+
+  function loadClockOffsetFromStorage() {
+    try {
+      var raw = localStorage.getItem(CLOCK_OFFSET_KEY);
+      if (raw == null || raw === "") return;
+      var v = Number(raw);
+      if (!Number.isFinite(v) || Math.abs(v) > 24 * 60 * 60 * 1000) return;
+      clockOffsetMs = Math.round(v);
+      clockOffsetUpdatedAt = Date.now();
+      clockOffsetInitialized = true;
+    } catch (e0) {}
   }
 
   var bc = null;
@@ -102,6 +155,11 @@
     } catch (e1) {}
     try {
       bc = new BroadcastChannel("metis-timer-" + (syncPresetId || "legacy"));
+      bc.addEventListener("message", function (ev) {
+        if (ev && ev.data && ev.data.type === "clockOffset") {
+          applyClockOffsetMessage(ev.data.offset);
+        }
+      });
     } catch (e2) {
       bc = null;
     }
@@ -555,6 +613,13 @@
   }
 
   reconnectBroadcastChannel();
+  loadClockOffsetFromStorage();
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("storage", function (ev) {
+      if (!ev || ev.key !== CLOCK_OFFSET_KEY || ev.newValue == null) return;
+      applyClockOffsetMessage(Number(ev.newValue));
+    });
+  }
 
   function defaultTimer() {
     return {
@@ -719,6 +784,7 @@
     "pendingBridge",
     "regCloseAt",
     "totalScheduleCommittedSec",
+    "levelAdvanceKind",
   ];
 
   var TIMER_SYNC_KEYS = [
@@ -733,6 +799,7 @@
     "pendingBridge",
     "regCloseAt",
     "totalScheduleCommittedSec",
+    "levelAdvanceKind",
     "timerUpdatedAt",
     "statsUpdatedAt",
     "controlUpdatedAt",
@@ -773,6 +840,13 @@
         out.pendingBridge = copyPendingBridgeForSync(state.pendingBridge);
       } else if (k === "hasStartedOnce") {
         out.hasStartedOnce = !!state.hasStartedOnce;
+      } else if (k === "levelAdvanceKind") {
+        if (
+          state.levelAdvanceKind === "expire" ||
+          state.levelAdvanceKind === "manual"
+        ) {
+          out.levelAdvanceKind = state.levelAdvanceKind;
+        }
       } else {
         out[k] = state[k];
       }
@@ -967,6 +1041,9 @@
         state.controlUpdatedAt = now;
         state.timerUpdatedAt = now;
         state.updatedAt = Math.max(now, curSU);
+        if (state.levelAdvanceKind !== "expire") {
+          state.levelAdvanceKind = "expire";
+        }
         syncDbg("PUSH", "assignSyncTimestamps:controlAdvance", {
           lastActionTimestamp: state.lastActionTimestamp,
           timerStatus: state.timerStatus,
@@ -1004,6 +1081,7 @@
     state.controlUpdatedAt = now;
     state.timerUpdatedAt = now;
     state.updatedAt = Math.max(now, curSU);
+    state.levelAdvanceKind = "manual";
     syncDbg("PUSH", "assignSyncTimestamps:userAction", {
       lastActionTimestamp: state.lastActionTimestamp,
       bumpStats: !!options.bumpStats,
@@ -1025,6 +1103,12 @@
         state.pendingBridge = copyPendingBridgeForSync(cloudSlice.pendingBridge);
       } else if (tk === "hasStartedOnce") {
         state.hasStartedOnce = !!cloudSlice.hasStartedOnce;
+      } else if (tk === "levelAdvanceKind") {
+        state.levelAdvanceKind =
+          cloudSlice.levelAdvanceKind === "expire" ||
+          cloudSlice.levelAdvanceKind === "manual"
+            ? cloudSlice.levelAdvanceKind
+            : null;
       } else {
         state[tk] = cloudSlice[tk];
       }
@@ -1060,11 +1144,14 @@
     }
   }
 
-  /** tick 전용: 재생 중 양쪽 모두일 때 위치(endAt·displayTime)만 동기화 */
+  /** tick 전용: 같은 레벨에서 재생 중일 때만 위치(endAt·displayTime) 동기화 */
   function applyCloudTickSlice(state, cloudSlice) {
     if (!cloudSlice.timer) return false;
     var t = normalizeTimer(state.timer, state);
     var ct = normalizeTimer(cloudSlice.timer, state);
+    if ((ct.levelIndex || 0) !== (t.levelIndex || 0)) {
+      return false;
+    }
     if (ct.endAt != null && Number.isFinite(ct.endAt)) {
       t.endAt = ct.endAt;
     }
@@ -1183,6 +1270,26 @@
   }
 
   /**
+   * 로컬에 아직 시간이 많이 남았는데 클라우드가 자동 만료로 레벨을 올리면 true.
+   * (탭/기기 시계 오차로 20초 남은 채 다음 블라인드 20:20이 되던 경로)
+   * 수동 LEVEL± 는 levelAdvanceKind=manual 이라 통과한다.
+   */
+  function isPrematureCloudExpire(cloudSlice, localSlice, now) {
+    if (isBootGraceActive()) return false;
+    if (!cloudSlice || !localSlice) return false;
+    if ((cloudSlice.levelAdvanceKind || "") !== "expire") return false;
+    var ct = cloudSlice.timer;
+    var lt = localSlice.timer;
+    if (!ct || !lt) return false;
+    var cIdx = Math.max(0, parseInt(ct.levelIndex, 10) || 0);
+    var lIdx = Math.max(0, parseInt(lt.levelIndex, 10) || 0);
+    if (cIdx <= lIdx) return false;
+    if (!lt.isRunning || lt.bridge) return false;
+    if (lt.endAt == null || !Number.isFinite(Number(lt.endAt))) return false;
+    return now < Number(lt.endAt) - PREMATURE_EXPIRE_GUARD_MS;
+  }
+
+  /**
    * 클라우드 슬라이스를 로컬 state에 병합한다.
    * lastActionTimestamp LWW: 클라우드가 더 최신이면 전체 덮어쓰기.
    * 동일 조작 세대에서는 tick(heartbeat)만 위치 동기화.
@@ -1197,6 +1304,15 @@
     var localSlice = pickTimerSyncSlice(state);
     var cloudLA = sliceLastActionAt(cloudSlice);
     var localLA = sliceLastActionAt(localSlice);
+
+    if (isPrematureCloudExpire(cloudSlice, localSlice, syncedNow())) {
+      syncDbg("PULL", "applyTimerSyncSlice:조기만료거부", {
+        cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
+        localLevel: localSlice.timer && localSlice.timer.levelIndex,
+        localEndAt: localSlice.timer && localSlice.timer.endAt,
+      });
+      return false;
+    }
 
     syncDbg("PULL", "applyTimerSyncSlice:판단", {
       cloudLA: cloudLA,
@@ -1300,7 +1416,10 @@
       return false;
     }
 
-    applyCloudTickSlice(state, cloudSlice);
+    if (!applyCloudTickSlice(state, cloudSlice)) {
+      syncDbg("PULL", "applyTimerSyncSlice:tick레벨불일치");
+      return false;
+    }
     reconcileRunningEndAt(state, syncedNow());
     state.displayTime = formatMMSS(remainingSec(state, syncedNow()));
     syncDbg("PULL", "applyTimerSyncSlice:tick위치만적용", {
@@ -1331,6 +1450,7 @@
       "pendingBridge",
       "regCloseAt",
       "totalScheduleCommittedSec",
+      "levelAdvanceKind",
       "timerUpdatedAt",
       "controlUpdatedAt",
       "heartbeatAt",
@@ -1730,6 +1850,9 @@
 
   /**
    * 레벨 시간 종료 시 다음 레벨로. canOwn true일 때만 상태 변경.
+   * 늦은 now 가 아니라 이전 레벨 endAt(oldEndAt)에 duration 을 더해
+   * 토너먼트 절대 스케줄이 밀리지 않게 한다. 백그라운드 지연으로
+   * 여러 레벨이 지났으면 한 스텝에서 연쇄 catch-up.
    * @returns {{ state: object, advanced: boolean, finished: boolean, leveledUp: boolean }}
    */
   function tickExpire(state, now, canOwn) {
@@ -1760,28 +1883,58 @@
       return { state: state, advanced: false, finished: false, leveledUp: false };
     }
 
-    var idx = clamp(t.levelIndex, 0, levels.length - 1);
-    var nextIdx = idx + 1;
-    if (nextIdx >= levels.length) {
-      t.isRunning = false;
-      t.endAt = null;
-      t.pausedRemainingSec = 0;
-      t.levelIndex = idx;
-      syncLevelField(state);
-      state.timerStatus = "종료";
-      state.displayTime = "00:00";
-      return { state: state, advanced: true, finished: true, leveledUp: false };
+    var advanced = false;
+    var finished = false;
+    var leveledUp = false;
+    var safety = levels.length + 2;
+
+    while (
+      safety-- > 0 &&
+      t.isRunning &&
+      t.endAt != null &&
+      Number.isFinite(t.endAt) &&
+      now >= t.endAt
+    ) {
+      var idx = clamp(t.levelIndex, 0, levels.length - 1);
+      var nextIdx = idx + 1;
+      if (nextIdx >= levels.length) {
+        t.isRunning = false;
+        t.endAt = null;
+        t.pausedRemainingSec = 0;
+        t.levelIndex = idx;
+        syncLevelField(state);
+        state.timerStatus = "종료";
+        state.displayTime = "00:00";
+        state.levelAdvanceKind = "expire";
+        advanced = true;
+        finished = true;
+        break;
+      }
+
+      var oldEndAt = t.endAt;
+      var dur = levelDurationSec(levels[nextIdx]);
+      t.levelIndex = nextIdx;
+      t.isRunning = true;
+      t.endAt = oldEndAt + dur * 1000;
+      advanced = true;
+      leveledUp = true;
     }
 
-    t.levelIndex = nextIdx;
-    var dur = levelDurationSec(levels[nextIdx]);
-    t.isRunning = true;
-    t.endAt = now + dur * 1000;
-    t.pausedRemainingSec = dur;
-    syncLevelField(state);
-    state.timerStatus = "진행중";
-    state.displayTime = formatMMSS(dur);
-    return { state: state, advanced: true, finished: false, leveledUp: true };
+    if (advanced && !finished) {
+      syncLevelField(state);
+      state.timerStatus = "진행중";
+      state.levelAdvanceKind = "expire";
+      var rem = remainingSec(state, now);
+      t.pausedRemainingSec = rem;
+      state.displayTime = formatMMSS(rem);
+    }
+
+    return {
+      state: state,
+      advanced: advanced,
+      finished: finished,
+      leveledUp: leveledUp,
+    };
   }
 
   function isTimerWindowLikelyOpen(now) {
@@ -1799,6 +1952,15 @@
     try {
       localStorage.setItem(getHeartbeatStorageKey(), String(Date.now()));
     } catch (e) {}
+  }
+
+  function clearTimerWindowHeartbeat() {
+    try {
+      localStorage.removeItem(getHeartbeatStorageKey());
+    } catch (e) {}
+    try {
+      localStorage.removeItem(HEARTBEAT_KEY);
+    } catch (e2) {}
   }
 
   var audioCtx = null;
@@ -1941,6 +2103,7 @@
     shouldOwnEngine: shouldOwnEngine,
     isTimerWindowLikelyOpen: isTimerWindowLikelyOpen,
     touchTimerWindowHeartbeat: touchTimerWindowHeartbeat,
+    clearTimerWindowHeartbeat: clearTimerWindowHeartbeat,
     playLevelBeep: playLevelBeep,
     subscribeSync: subscribeSync,
     notifyLocalSyncListeners: notifyLocalSyncListeners,
@@ -1961,6 +2124,7 @@
     sliceControlUpdatedAt: sliceControlUpdatedAt,
     sliceLastActionAt: sliceLastActionAt,
     shouldForceApplyCloudControl: shouldForceApplyCloudControl,
+    isPrematureCloudExpire: isPrematureCloudExpire,
     isBootGraceActive: isBootGraceActive,
     isEffectivelyPlayingSlice: isEffectivelyPlayingSlice,
     isEffectivelyRunningTimer: isEffectivelyRunningTimer,

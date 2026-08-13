@@ -180,6 +180,7 @@ var CONTROL_PAYLOAD_KEYS = [
   "pendingBridge",
   "regCloseAt",
   "totalScheduleCommittedSec",
+  "levelAdvanceKind",
   "timerUpdatedAt",
   "controlUpdatedAt",
   "heartbeatAt",
@@ -245,6 +246,10 @@ function syncServerClockOffset(force) {
         return null;
       }
       var rtt = Math.max(0, t1 - t0);
+      if (rtt > 3000) {
+        console.warn("[MetisClock] RTT 과다 — offset 무시", { rttMs: rtt });
+        return null;
+      }
       // 왕복의 중간 시점에 서버 시각이 기록됐다고 가정
       var offset = Math.round(serverMs - (t0 + rtt / 2));
       applyClockOffsetToTimer(offset, rtt);
@@ -346,6 +351,10 @@ function buildControlPayload(slice, presetId) {
       0,
       Math.floor(Number(slice.totalScheduleCommittedSec) || 0)
     ),
+    levelAdvanceKind:
+      slice.levelAdvanceKind === "expire" || slice.levelAdvanceKind === "manual"
+        ? slice.levelAdvanceKind
+        : null,
     timerUpdatedAt: Number(slice.timerUpdatedAt) || 0,
     controlUpdatedAt: Number(slice.controlUpdatedAt) || 0,
     heartbeatAt: Number(slice.heartbeatAt) || 0,
@@ -656,6 +665,18 @@ function applyTimerControlToLocal(presetId, raw) {
       localLA: localLA,
       remoteLA: remoteLA,
       cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
+    });
+    return false;
+  }
+
+  if (
+    MetisTimer.isPrematureCloudExpire &&
+    MetisTimer.isPrematureCloudExpire(cloudSlice, localSlice, MetisTimer.now())
+  ) {
+    console.log("[MetisFirestore|PULL|applyTimerControl:조기만료거부]", {
+      cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
+      localLevel: localSlice.timer && localSlice.timer.levelIndex,
+      kind: cloudSlice.levelAdvanceKind,
     });
     return false;
   }
