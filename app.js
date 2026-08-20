@@ -1122,55 +1122,24 @@
     Object.assign(remoteState, MetisTimer.pickRemoteSlice(s));
   }
 
-  function alignTimerToCurrentLevel() {
-    MetisTimer.setSyncPresetId(getActivePresetId());
-    var s = MetisTimer.readSyncState() || buildFullSync();
-    var levels = MetisTimer.getActiveLevels(s);
-    if (!levels || !levels.length) {
-      persistAll();
+  function paintHomeLevel(state) {
+    var lvlEl = document.getElementById("val-level");
+    if (!lvlEl) return;
+    if (state && MetisTimer.formatPlayLevelDisplay) {
+      lvlEl.textContent = MetisTimer.formatPlayLevelDisplay(state);
       return;
     }
+    lvlEl.textContent = String(remoteState.level != null ? remoteState.level : 1);
+  }
+
+  function stepHomeScheduleLevel(delta) {
+    MetisTimer.setSyncPresetId(getActivePresetId());
+    var s = MetisTimer.readSyncState() || buildFullSync();
     var now = MetisTimer.now ? MetisTimer.now() : Date.now();
-    var targetIdx = Math.max(0, (parseInt(remoteState.level, 10) || 1) - 1);
-    targetIdx = Math.min(targetIdx, levels.length - 1);
-    s.timer = MetisTimer.normalizeTimer(s.timer || {}, s);
-    if (
-      MetisTimer.isPreGameBridge(s, s.timer) &&
-      targetIdx > s.timer.levelIndex
-    ) {
-      MetisTimer.applyResume(s, now);
-    } else {
-      s.timer.bridge = null;
-      s.pendingBridge = null;
-      s.timer.levelIndex = targetIdx;
-      MetisTimer.syncLevelField(s);
-      var dur = MetisTimer.levelDurationSec(levels[s.timer.levelIndex]);
-      if (s.timer.isRunning) {
-        s.timer.endAt = now + dur * 1000;
-        s.timer.pausedRemainingSec = dur;
-        s.timerStatus = "진행중";
-      } else {
-        s.timer.pausedRemainingSec = dur;
-        s.timer.endAt = null;
-        if (
-          s.timerStatus === "대기 타이머" ||
-          s.timerStatus === "시작 준비"
-        ) {
-          s.timerStatus = "일시정지";
-        } else if (
-          s.timerStatus !== "종료" &&
-          s.timerStatus !== "일시정지" &&
-          s.timerStatus !== "대기중"
-        ) {
-          s.timerStatus = "일시정지";
-        }
-      }
-      s.displayTime = MetisTimer.formatMMSS(
-        MetisTimer.remainingSec(s, now)
-      );
-    }
+    MetisTimer.applyScheduleLevelDelta(s, now, delta);
     MetisTimer.writeSyncState(s, { userAction: true, urgentCloudPush: true });
     applySyncToRemoteState(s);
+    renderRemote();
   }
 
   var screenAuth = document.getElementById("screen-auth");
@@ -1379,8 +1348,7 @@
       elTimerStatus.textContent = step.state.timerStatus || "대기중";
       Object.assign(remoteState, MetisTimer.pickRemoteSlice(step.state));
       clampPlayerEntry(remoteState);
-      var lvlEl = document.getElementById("val-level");
-      if (lvlEl) lvlEl.textContent = String(step.state.level || 1);
+      paintHomeLevel(step.state);
       var vPl = document.getElementById("val-player");
       var vEn = document.getElementById("val-entry");
       if (vPl && vPl.tagName === "INPUT" && document.activeElement !== vPl) {
@@ -1923,9 +1891,7 @@
       "val-entry-chips-display",
       remoteState.entryChips != null ? remoteState.entryChips : 0
     );
-    document.getElementById("val-level").textContent = String(
-      remoteState.level != null ? remoteState.level : 1
-    );
+    paintHomeLevel(s);
     fillMetaInputsFromRemoteState({ force: !!options.forceMeta });
   }
 
@@ -2829,23 +2795,10 @@
   }
 
   document.getElementById("btn-level-minus").addEventListener("click", function () {
-    var lv = Math.floor(Number(remoteState.level));
-    if (!Number.isFinite(lv) || lv < 1) lv = 1;
-    remoteState.level = Math.max(1, lv - 1);
-    document.getElementById("val-level").textContent = String(remoteState.level);
-    alignTimerToCurrentLevel();
-    renderRemote();
+    stepHomeScheduleLevel(-1);
   });
   document.getElementById("btn-level-plus").addEventListener("click", function () {
-    var lv = Math.floor(Number(remoteState.level));
-    if (!Number.isFinite(lv) || lv < 1) lv = 1;
-    var sPeek = MetisTimer.readSyncState() || buildFullSync();
-    var lvls = MetisTimer.getActiveLevels(sPeek);
-    var maxStep = lvls && lvls.length ? lvls.length : 99999;
-    remoteState.level = Math.min(maxStep, lv + 1);
-    document.getElementById("val-level").textContent = String(remoteState.level);
-    alignTimerToCurrentLevel();
-    renderRemote();
+    stepHomeScheduleLevel(1);
   });
 
   MetisTimer.subscribeSync(function () {

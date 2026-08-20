@@ -426,13 +426,15 @@
       .break-top-bar {
         width: 100%;
         max-width: var(--timer-layout-max);
+        min-width: 0;
         margin: 0 auto 10px;
-        padding: 12px 18px;
+        padding: 12px 24px;
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 14px 24px;
+        gap: 10px 20px;
         flex-wrap: wrap;
+        text-align: center;
         background: rgba(180, 83, 79, 0.18);
         border: 1px solid rgba(180, 83, 79, 0.45);
         border-radius: 12px;
@@ -446,6 +448,17 @@
         letter-spacing: 0.14em;
         color: #f87171;
         font-weight: 700;
+        flex-shrink: 0;
+      }
+      .break-top-main {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 10px 16px;
+        min-width: 0;
+        max-width: 100%;
+        text-align: center;
       }
       .break-top-clock {
         font-size: 3.5rem;
@@ -453,6 +466,29 @@
         font-variant-numeric: tabular-nums;
         color: var(--cyan);
         line-height: 1;
+        flex-shrink: 0;
+      }
+      .break-top-sep {
+        color: rgba(248, 113, 113, 0.65);
+        font-size: 1.65rem;
+        font-weight: 700;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+      .break-top-sep.is-hidden,
+      .break-top-next.is-hidden {
+        display: none;
+      }
+      .break-top-next {
+        color: var(--cyan);
+        font-size: 1.35rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        line-height: 1.25;
+        min-width: 0;
+        max-width: 100%;
+        word-break: keep-all;
+        overflow-wrap: anywhere;
       }
       .break-video-stage {
         box-sizing: border-box;
@@ -657,7 +693,11 @@
     </div>
     <div id="break-top-bar" class="break-top-bar is-hidden" aria-live="polite">
       <span class="break-top-meta">쉬는 시간 · 남은 시간</span>
-      <span id="break-remaining-top" class="break-top-clock">00:00</span>
+      <div class="break-top-main">
+        <span id="break-remaining-top" class="break-top-clock">00:00</span>
+        <span id="break-next-sep" class="break-top-sep is-hidden" aria-hidden="true">|</span>
+        <span id="break-next-level" class="break-top-next is-hidden"></span>
+      </div>
     </div>
     <header class="timer-page-header">
       <h1 class="timer-tournament-title" id="el-title">토너먼트</h1>
@@ -1067,7 +1107,47 @@
           playBreakVideo(vid);
         }
 
-        function syncBreakUi(onBreak, breakRow, rem, timerRunning) {
+        function formatChipCount(n) {
+          return Math.max(0, Math.floor(Number(n) || 0)).toLocaleString("ko-KR");
+        }
+
+        function nextPlayLevelAfter(levels, fromIdx) {
+          if (!levels) return null;
+          for (var i = fromIdx + 1; i < levels.length; i++) {
+            if (levels[i] && !MetisTimer.isBreakRow(levels[i])) {
+              return { row: levels[i], index: i };
+            }
+          }
+          return null;
+        }
+
+        function formatBreakNextLevelText(levels, currentIdx) {
+          var next = nextPlayLevelAfter(levels, currentIdx);
+          if (!next) return "";
+          var row = next.row;
+          return (
+            "NEXT LEVEL " +
+            MetisTimer.playLevelsCountUpTo(levels, next.index) +
+            " (" +
+            formatChipCount(row.sb) +
+            "/" +
+            formatChipCount(row.bb) +
+            "/" +
+            formatChipCount(row.ante != null ? row.ante : 0) +
+            ")"
+          );
+        }
+
+        function setBreakNextLevelVisible(visible, text) {
+          var nextEl = $("break-next-level");
+          var sepEl = $("break-next-sep");
+          var label = visible && text ? text : "";
+          textIf("break-next-level", label);
+          if (nextEl) nextEl.classList.toggle("is-hidden", !label);
+          if (sepEl) sepEl.classList.toggle("is-hidden", !label);
+        }
+
+        function syncBreakUi(onBreak, breakRow, rem, timerRunning, levels, levelIndex) {
           var topBar = $("break-top-bar");
           var vidStage = $("break-video-stage");
           var norm = $("normal-stage-main");
@@ -1079,6 +1159,7 @@
             vidStage.setAttribute("aria-hidden", "false");
             norm.classList.add("is-hidden");
             textIf("break-remaining-top", MetisTimer.formatMMSS(rem));
+            setBreakNextLevelVisible(true, formatBreakNextLevelText(levels, levelIndex));
             bindBreakVideoVolumeControls(vid);
 
             if (!wasBreakUiActive) {
@@ -1110,6 +1191,7 @@
             wasBreakUiActive = false;
             breakLastTimerRun = false;
             topBar.classList.add("is-hidden");
+            setBreakNextLevelVisible(false, "");
             vidStage.classList.add("is-hidden");
             vidStage.setAttribute("aria-hidden", "true");
             norm.classList.remove("is-hidden");
@@ -1129,14 +1211,6 @@
             if (!MetisTimer.isBreakRow(levels[i])) return levels[i];
           }
           return null;
-        }
-
-        function playLevelsCountUpTo(levels, idxInclusive) {
-          var n = 0;
-          for (var j = 0; j <= idxInclusive; j++) {
-            if (levels[j] && !MetisTimer.isBreakRow(levels[j])) n++;
-          }
-          return n;
         }
 
         function formatCountdownHMS(endMs, now) {
@@ -1234,20 +1308,6 @@
           return Math.max(0, Math.floor(Number(s && s.entryChips) || 0));
         }
 
-        /** 플레이 레벨 번호(브레이크 제외 N번째)에 해당하는 스케줄 행 인덱스 */
-        function findNthPlayLevelRowIndex(levels, playLevelN) {
-          if (!levels || playLevelN < 1) return null;
-          var seen = 0;
-          for (var i = 0; i < levels.length; i++) {
-            if (!MetisTimer.isBreakRow(levels[i])) {
-              seen++;
-              if (seen === playLevelN) return i;
-            }
-          }
-          return null;
-        }
-
-        /** 스케줄 행 targetIdx 구간이 끝날 때까지 남은 시간(초). 이미 지나면 0 */
         function secondsUntilScheduleRowEnd(levels, scheduleIndex, remSec, targetIdx) {
           if (targetIdx == null || targetIdx < 0) return 0;
           var n = levels.length;
@@ -1273,7 +1333,7 @@
           closeAfterPlayLevel
         ) {
           if (closeAfterPlayLevel == null || closeAfterPlayLevel < 1) return null;
-          var startIdx = findNthPlayLevelRowIndex(levels, closeAfterPlayLevel);
+          var startIdx = MetisTimer.findNthPlayLevelRowIndex(levels, closeAfterPlayLevel);
           if (startIdx == null) return null;
           var deadlineIdx = startIdx - 1;
           return secondsUntilScheduleRowEnd(levels, scheduleIndex, remSec, deadlineIdx);
@@ -1494,7 +1554,7 @@
               textIf("el-level", "BREAK TIME");
               htmlIf("el-blinds", "");
             } else {
-              textIf("el-level", "LEVEL " + playLevelsCountUpTo(levels, li));
+              textIf("el-level", "LEVEL " + MetisTimer.playLevelsCountUpTo(levels, li));
               htmlIf(
                 "el-blinds",
                 '<span class="lab">BLINDS</span> ' +
@@ -1541,7 +1601,7 @@
               if (!Number.isFinite(bm)) bm = 0;
               htmlIf("el-next", "<strong>NEXT BREAK</strong> — 약 " + bm + "분");
             } else {
-              var nextOrd = playLevelsCountUpTo(levels, li + 1);
+              var nextOrd = MetisTimer.playLevelsCountUpTo(levels, li + 1);
               htmlIf(
                 "el-next",
                 "<strong>NEXT LEVEL " +
@@ -1609,7 +1669,9 @@
             !!(L && MetisTimer.isBreakRow(L)),
             L && MetisTimer.isBreakRow(L) ? L : null,
             rem,
-            !!tmr
+            !!tmr,
+            levels,
+            li
           );
         }
 

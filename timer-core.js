@@ -655,6 +655,42 @@
     return !!(row && row.type === "break");
   }
 
+  /** 스케줄 행 0..idxInclusive 중 블라인드(브레이크 제외) 개수 = 타이머 LEVEL 번호 */
+  function playLevelsCountUpTo(levels, idxInclusive) {
+    if (!levels || !levels.length) return 0;
+    var last = Math.max(0, Math.min(Math.floor(Number(idxInclusive)) || 0, levels.length - 1));
+    var n = 0;
+    for (var j = 0; j <= last; j++) {
+      if (levels[j] && !isBreakRow(levels[j])) n++;
+    }
+    return n;
+  }
+
+  /** 플레이 레벨 번호(브레이크 제외 N번째)에 해당하는 스케줄 행 인덱스 */
+  function findNthPlayLevelRowIndex(levels, playLevelN) {
+    if (!levels || playLevelN < 1) return null;
+    var seen = 0;
+    for (var i = 0; i < levels.length; i++) {
+      if (!isBreakRow(levels[i])) {
+        seen++;
+        if (seen === playLevelN) return i;
+      }
+    }
+    return null;
+  }
+
+  /** 홈/타이머에 보여줄 레벨 텍스트. 브레이크면 BREAK, 아니면 블라인드 번호 */
+  function formatPlayLevelDisplay(state) {
+    if (!state) return "1";
+    var levels = getActiveLevels(state);
+    if (!levels || !levels.length) return "1";
+    var t = normalizeTimer(state.timer || {}, state);
+    var li = clamp(t.levelIndex, 0, levels.length - 1);
+    if (isBreakRow(levels[li])) return "BREAK";
+    var n = playLevelsCountUpTo(levels, li);
+    return String(n > 0 ? n : 1);
+  }
+
   function levelDurationSec(level) {
     var m = Number(level && level.minutes);
     if (!Number.isFinite(m) || m <= 0) m = 20;
@@ -2088,6 +2124,9 @@
     mergeActivePresetBoundConfigIntoState: mergeActivePresetBoundConfigIntoState,
     PRESET_BOUND_CONFIG_KEYS: PRESET_BOUND_CONFIG_KEYS,
     isBreakRow: isBreakRow,
+    playLevelsCountUpTo: playLevelsCountUpTo,
+    findNthPlayLevelRowIndex: findNthPlayLevelRowIndex,
+    formatPlayLevelDisplay: formatPlayLevelDisplay,
     levelDurationSec: levelDurationSec,
     formatMMSS: formatMMSS,
     remainingSec: remainingSec,
