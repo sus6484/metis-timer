@@ -721,8 +721,9 @@
       ),
     };
     var levels = getActiveLevels(state);
-    var maxI = levels ? levels.length - 1 : 0;
-    out.levelIndex = clamp(out.levelIndex, 0, Math.max(0, maxI));
+    if (levels && levels.length) {
+      out.levelIndex = clamp(out.levelIndex, 0, levels.length - 1);
+    }
     if (!Number.isFinite(out.endAt)) out.endAt = null;
     var br = t.bridge;
     if (
@@ -877,12 +878,8 @@
       } else if (k === "hasStartedOnce") {
         out.hasStartedOnce = !!state.hasStartedOnce;
       } else if (k === "levelAdvanceKind") {
-        if (
-          state.levelAdvanceKind === "expire" ||
-          state.levelAdvanceKind === "manual"
-        ) {
-          out.levelAdvanceKind = state.levelAdvanceKind;
-        }
+        var kindPush = normalizeLevelAdvanceKind(state.levelAdvanceKind);
+        if (kindPush) out.levelAdvanceKind = kindPush;
       } else {
         out[k] = state[k];
       }
@@ -971,6 +968,73 @@
     if (Number.isFinite(cu) && cu > 0) max = Math.max(max, cu);
     if (Number.isFinite(su) && su > 0) max = Math.max(max, su);
     return max;
+  }
+
+  function normalizeLevelAdvanceKind(kind) {
+    if (kind === "expire" || kind === "manual" || kind === "reset") return kind;
+    return null;
+  }
+
+  function sliceLevelIndex(slice) {
+    if (!slice || !slice.timer) return 0;
+    return Math.max(0, Math.floor(Number(slice.timer.levelIndex) || 0));
+  }
+
+  function isResetControlSlice(slice) {
+    if (!slice) return false;
+    if (normalizeLevelAdvanceKind(slice.levelAdvanceKind) === "reset") return true;
+    var status = slice.timerStatus || "";
+    return status === "대기중" && !slice.hasStartedOnce && sliceLevelIndex(slice) === 0;
+  }
+
+  /** 리모컨/타이머의 LEVEL± 또는 종료. 시계가 어긋나도 사용자 조작은 통과시킨다. */
+  function isIntentionalLevelMutation(slice) {
+    var kind = normalizeLevelAdvanceKind(slice && slice.levelAdvanceKind);
+    return kind === "manual" || kind === "reset";
+  }
+
+  /**
+   * incoming 레벨이 existing보다 낮을 때 허용되는 경우:
+   * STOP(reset), 또는 수동 LEVEL- 한 칸.
+   * 일시정지·하트비트·지연된 expire 쓰기는 거부한다.
+   */
+  function allowsLevelIndexDecrease(incoming, existing) {
+    if (!incoming || !existing) return true;
+    var inIdx = sliceLevelIndex(incoming);
+    var exIdx = sliceLevelIndex(existing);
+    if (inIdx >= exIdx) return true;
+    if (isResetControlSlice(incoming)) return true;
+    if (normalizeLevelAdvanceKind(incoming.levelAdvanceKind) === "manual") {
+      return exIdx - inIdx === 1;
+    }
+    return false;
+  }
+
+  /**
+   * 서버/로컬의 최신 제어 상태를 incoming이 덮으면 안 되면 true.
+   * 시계가 앞선 기기가 낡은 레벨에 새 lastActionTimestamp를 찍는 경로를 막는다.
+   */
+  function isStaleTimerControlWrite(incoming, existing) {
+    if (!incoming) return true;
+    if (!existing) return false;
+    if (!allowsLevelIndexDecrease(incoming, existing)) return true;
+    // LEVEL± / 종료는 lastActionTimestamp 비교로 막지 않음 (기기 시계 오차)
+    if (isIntentionalLevelMutation(incoming)) return false;
+    var inLA = sliceLastActionAt(incoming);
+    var exLA = sliceLastActionAt(existing);
+    var inIdx = sliceLevelIndex(incoming);
+    var exIdx = sliceLevelIndex(existing);
+    if (exLA > 0 && inLA > 0 && inLA < exLA) {
+      // 타임스탬프는 과거여도 레벨이 앞서면(거부된 로컬 쓰기가 남음) 적용해야 함
+      if (inIdx > exIdx) return false;
+      return true;
+    }
+    if (inLA === exLA) {
+      var inRank = timerGameplayRank(incoming);
+      var exRank = timerGameplayRank(existing);
+      if (exRank > inRank + 5 && !isResetControlSlice(incoming)) return true;
+    }
+    return false;
   }
 
   function isTickSyncUpdate(options) {
@@ -1117,9 +1181,14 @@
     state.controlUpdatedAt = now;
     state.timerUpdatedAt = now;
     state.updatedAt = Math.max(now, curSU);
-    state.levelAdvanceKind = "manual";
+    if (options.levelMutation === "reset") {
+      state.levelAdvanceKind = "reset";
+    } else if (options.levelMutation === "manual") {
+      state.levelAdvanceKind = "manual";
+    }
     syncDbg("PUSH", "assignSyncTimestamps:userAction", {
       lastActionTimestamp: state.lastActionTimestamp,
+      levelMutation: options.levelMutation || null,
       bumpStats: !!options.bumpStats,
       player: state.player,
       entry: state.entry,
@@ -1140,11 +1209,9 @@
       } else if (tk === "hasStartedOnce") {
         state.hasStartedOnce = !!cloudSlice.hasStartedOnce;
       } else if (tk === "levelAdvanceKind") {
-        state.levelAdvanceKind =
-          cloudSlice.levelAdvanceKind === "expire" ||
-          cloudSlice.levelAdvanceKind === "manual"
-            ? cloudSlice.levelAdvanceKind
-            : null;
+        state.levelAdvanceKind = normalizeLevelAdvanceKind(
+          cloudSlice.levelAdvanceKind
+        );
       } else {
         state[tk] = cloudSlice[tk];
       }
@@ -1210,8 +1277,14 @@
     return true;
   }
 
-  /** isRunning인데 endAt이 없으면 보정 — pausedRemainingSec만 쓰면 기기마다 30초+ 어긋남 */
-  function reconcileRunningEndAt(state, now) {
+  /**
+   * isRunning인데 endAt이 있으면 pausedRemainingSec만 맞춘다.
+   * endAt 을 지금 시각 기준으로 새로 만들면(invent) 폰이 옛 레벨에서
+   * 시계를 다시 시작하게 되므로, 읽기/표시 경로에서는 만들지 않는다.
+   * 저장(주인 기기 PUSH) 때만 inventEndAt:true.
+   */
+  function reconcileRunningEndAt(state, now, options) {
+    options = options || {};
     if (!state || !state.timer) return;
     var t = normalizeTimer(state.timer, state);
     state.timer = t;
@@ -1221,6 +1294,7 @@
         t.pausedRemainingSec = remainingSec(state, now);
         return;
       }
+      if (!options.inventEndAt) return;
       var rem = Math.max(0, Math.floor(t.pausedRemainingSec || 0));
       if (rem <= 0) {
         var levels = getActiveLevels(state);
@@ -1341,13 +1415,56 @@
     var cloudLA = sliceLastActionAt(cloudSlice);
     var localLA = sliceLastActionAt(localSlice);
 
-    if (isPrematureCloudExpire(cloudSlice, localSlice, syncedNow())) {
+    if (
+      !options.bootHydrate &&
+      isPrematureCloudExpire(cloudSlice, localSlice, syncedNow())
+    ) {
       syncDbg("PULL", "applyTimerSyncSlice:조기만료거부", {
         cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
         localLevel: localSlice.timer && localSlice.timer.levelIndex,
         localEndAt: localSlice.timer && localSlice.timer.endAt,
       });
       return false;
+    }
+
+    if (
+      !options.bootHydrate &&
+      isStaleTimerControlWrite(cloudSlice, localSlice)
+    ) {
+      syncDbg("PULL", "applyTimerSyncSlice:낡은롤백거부", {
+        cloudLA: cloudLA,
+        localLA: localLA,
+        cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
+        localLevel: localSlice.timer && localSlice.timer.levelIndex,
+        kind: cloudSlice.levelAdvanceKind,
+        forceApply: !!options.forceApply,
+      });
+      return false;
+    }
+
+    if (
+      sliceLevelIndex(cloudSlice) > sliceLevelIndex(localSlice) &&
+      isStaleTimerControlWrite(localSlice, cloudSlice)
+    ) {
+      applyCloudControlSlice(state, cloudSlice);
+      syncDbg("PULL", "applyTimerSyncSlice:로컬낡은레벨이라클라우드채택", {
+        cloudLA: cloudLA,
+        localLA: localLA,
+        cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
+        localLevel: localSlice.timer && localSlice.timer.levelIndex,
+      });
+      return true;
+    }
+
+    if (isIntentionalLevelMutation(cloudSlice)) {
+      applyCloudControlSlice(state, cloudSlice);
+      syncDbg("PULL", "applyTimerSyncSlice:수동레벨조작적용", {
+        cloudLA: cloudLA,
+        localLA: localLA,
+        kind: cloudSlice.levelAdvanceKind,
+        cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
+      });
+      return true;
     }
 
     syncDbg("PULL", "applyTimerSyncSlice:판단", {
@@ -1505,7 +1622,7 @@
     mergePresetsIntoState(state);
     if (syncPresetId) state.activePresetId = String(syncPresetId);
     if (!options.skipPresetEmbed) embedActivePresetTournament(state);
-    reconcileRunningEndAt(state, syncedNow());
+    reconcileRunningEndAt(state, syncedNow(), { inventEndAt: true });
     assignSyncTimestamps(state, options);
     var str = JSON.stringify(state);
     localStorage.setItem(getSyncStorageKey(), str);
@@ -1596,7 +1713,12 @@
     var t = state.timer;
     var levels = getActiveLevels(state);
     if (!levels || !levels.length) {
-      state.level = 1;
+      if (state.level != null && Number(state.level) > 0) return;
+      if (t && t.levelIndex != null) {
+        state.level = Math.max(1, Math.floor(Number(t.levelIndex) || 0) + 1);
+      } else {
+        state.level = 1;
+      }
       return;
     }
     t.levelIndex = clamp(t.levelIndex, 0, levels.length - 1);
@@ -1604,12 +1726,11 @@
   }
 
   function buildInitialTimerState() {
-    var presets = loadPresetsFromStorage();
     if (!syncPresetId) return null;
+    var presets = loadPresetsFromStorage();
     var p = findPresetInList(presets, syncPresetId);
-    if (!p) return null;
-    var tour = tournamentFieldsFromPreset(p);
-    var levels = p.levels && p.levels.length ? p.levels : null;
+    var tour = p ? tournamentFieldsFromPreset(p) : defaultTournamentFields();
+    var levels = p && p.levels && p.levels.length ? p.levels : null;
     var dur = levels && levels.length ? levelDurationSec(levels[0]) : 0;
     var state = Object.assign({}, tour, {
       presets: presets,
@@ -1885,10 +2006,13 @@
   }
 
   /**
-   * 레벨 시간 종료 시 다음 레벨로. canOwn true일 때만 상태 변경.
+   * 레벨 시간 종료 시 다음 레벨로.
    * 늦은 now 가 아니라 이전 레벨 endAt(oldEndAt)에 duration 을 더해
    * 토너먼트 절대 스케줄이 밀리지 않게 한다. 백그라운드 지연으로
    * 여러 레벨이 지났으면 한 스텝에서 연쇄 catch-up.
+   *
+   * persist=false(리모컨/팔로워)여도 화면용으로 같은 계산을 한다.
+   * 저장·클라우드 쓰기는 engineStep 이 주인 기기에서만 한다.
    * @returns {{ state: object, advanced: boolean, finished: boolean, leveledUp: boolean }}
    */
   function tickExpire(state, now, canOwn) {
@@ -1903,7 +2027,7 @@
       state.displayTime = "00:00";
       return { state: state, advanced: false, finished: true, leveledUp: false };
     }
-    if (!canOwn || !levels || !levels.length) {
+    if (!levels || !levels.length) {
       syncLevelField(state);
       state.displayTime = formatMMSS(remainingSec(state, now));
       return { state: state, advanced: false, finished: false, leveledUp: false };
@@ -1979,9 +2103,9 @@
     return now - v < WINDOW_STALE_MS;
   }
 
+  /** 자동 만료(레벨업)는 타이머 창만. 리모컨은 표시·수동 조작만 한다. */
   function shouldOwnEngine(now) {
-    if (global.__METIS_IS_TIMER_PAGE) return true;
-    return !isTimerWindowLikelyOpen(now);
+    return !!global.__METIS_IS_TIMER_PAGE;
   }
 
   function touchTimerWindowHeartbeat() {
@@ -2046,6 +2170,7 @@
    *
    * ⛔ 초 단위 틱/하트비트는 Firestore에 쓰지 않는다.
    *    클라우드는 사용자 조작·레벨 만료(autoTick)·브리지 완료만 반영.
+   * 팔로워(리모컨)는 endAt 기준으로 화면만 catch-up 하고 저장하지 않는다.
    */
   function engineStep() {
     var s = readSyncState();
@@ -2056,20 +2181,17 @@
     s.timer = t;
 
     var bridgeCompleted = null;
-    if (
-      canOwn &&
-      t.bridge &&
-      Number.isFinite(t.bridge.until) &&
-      now >= t.bridge.until
-    ) {
+    if (t.bridge && Number.isFinite(t.bridge.until) && now >= t.bridge.until) {
       bridgeCompleted = t.bridge.kind;
       t.bridge = null;
       applyResume(s, now);
-      writeSyncState(s, {
-        skipPresetEmbed: true,
-        autoTick: true,
-        bumpControlAction: true,
-      });
+      if (canOwn) {
+        writeSyncState(s, {
+          skipPresetEmbed: true,
+          autoTick: true,
+          bumpControlAction: true,
+        });
+      }
       return {
         state: s,
         advanced: false,
@@ -2082,7 +2204,7 @@
     }
 
     var res = tickExpire(s, now, canOwn);
-    if (res.advanced) {
+    if (res.advanced && canOwn) {
       writeSyncState(res.state, {
         skipPresetEmbed: true,
         autoTick: true,
@@ -2162,6 +2284,12 @@
     sliceStatsUpdatedAt: sliceStatsUpdatedAt,
     sliceControlUpdatedAt: sliceControlUpdatedAt,
     sliceLastActionAt: sliceLastActionAt,
+    sliceLevelIndex: sliceLevelIndex,
+    isStaleTimerControlWrite: isStaleTimerControlWrite,
+    allowsLevelIndexDecrease: allowsLevelIndexDecrease,
+    isResetControlSlice: isResetControlSlice,
+    isIntentionalLevelMutation: isIntentionalLevelMutation,
+    normalizeLevelAdvanceKind: normalizeLevelAdvanceKind,
     shouldForceApplyCloudControl: shouldForceApplyCloudControl,
     isPrematureCloudExpire: isPrematureCloudExpire,
     isBootGraceActive: isBootGraceActive,

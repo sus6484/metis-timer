@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <title>Metis — 타이머</title>
-    <link rel="stylesheet" href="styles.css?v=20260813a" />
+    <link rel="stylesheet" href="styles.css?v=20260820a" />
     <style>
       :root {
         color-scheme: dark;
@@ -470,7 +470,7 @@
       }
       .break-top-sep {
         color: rgba(248, 113, 113, 0.65);
-        font-size: 1.65rem;
+        font-size: 2.4rem;
         font-weight: 700;
         line-height: 1;
         flex-shrink: 0;
@@ -480,15 +480,19 @@
         display: none;
       }
       .break-top-next {
-        color: var(--cyan);
-        font-size: 1.35rem;
-        font-weight: 800;
-        letter-spacing: 0.04em;
-        line-height: 1.25;
+        color: var(--muted);
+        font-size: 2.5rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        line-height: 1.15;
         min-width: 0;
         max-width: 100%;
         word-break: keep-all;
         overflow-wrap: anywhere;
+      }
+      .break-top-next strong {
+        color: var(--cyan);
+        font-weight: 800;
       }
       .break-video-stage {
         box-sizing: border-box;
@@ -836,9 +840,9 @@
       })();
     </script>
 
-    <script>window.__METIS_ASSET_V = "20260813a";</script>
-    <script type="module" src="firebase.js?v=20260813a"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260813a"></script>
+    <script>window.__METIS_ASSET_V = "20260820a";</script>
+    <script type="module" src="firebase.js?v=20260820a"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260820a"></script>
     <script>
       (function () {
         function startBoot() {
@@ -1107,10 +1111,6 @@
           playBreakVideo(vid);
         }
 
-        function formatChipCount(n) {
-          return Math.max(0, Math.floor(Number(n) || 0)).toLocaleString("ko-KR");
-        }
-
         function nextPlayLevelAfter(levels, fromIdx) {
           if (!levels) return null;
           for (var i = fromIdx + 1; i < levels.length; i++) {
@@ -1121,28 +1121,28 @@
           return null;
         }
 
-        function formatBreakNextLevelText(levels, currentIdx) {
+        function formatBreakNextLevelHtml(levels, currentIdx) {
           var next = nextPlayLevelAfter(levels, currentIdx);
           if (!next) return "";
           var row = next.row;
           return (
-            "NEXT LEVEL " +
+            "<strong>NEXT LEVEL " +
             MetisTimer.playLevelsCountUpTo(levels, next.index) +
+            "</strong> — " +
+            row.sb +
+            "/" +
+            row.bb +
             " (" +
-            formatChipCount(row.sb) +
-            "/" +
-            formatChipCount(row.bb) +
-            "/" +
-            formatChipCount(row.ante != null ? row.ante : 0) +
+            (row.ante != null ? row.ante : 0) +
             ")"
           );
         }
 
-        function setBreakNextLevelVisible(visible, text) {
+        function setBreakNextLevelVisible(visible, html) {
           var nextEl = $("break-next-level");
           var sepEl = $("break-next-sep");
-          var label = visible && text ? text : "";
-          textIf("break-next-level", label);
+          var label = visible && html ? html : "";
+          htmlIf("break-next-level", label);
           if (nextEl) nextEl.classList.toggle("is-hidden", !label);
           if (sepEl) sepEl.classList.toggle("is-hidden", !label);
         }
@@ -1159,7 +1159,7 @@
             vidStage.setAttribute("aria-hidden", "false");
             norm.classList.add("is-hidden");
             textIf("break-remaining-top", MetisTimer.formatMMSS(rem));
-            setBreakNextLevelVisible(true, formatBreakNextLevelText(levels, levelIndex));
+            setBreakNextLevelVisible(true, formatBreakNextLevelHtml(levels, levelIndex));
             bindBreakVideoVolumeControls(vid);
 
             if (!wasBreakUiActive) {
@@ -1991,6 +1991,7 @@
             userAction: true,
             bumpStats: !!options.bumpStats,
             urgentCloudPush: !!options.urgentCloudPush,
+            levelMutation: options.levelMutation,
           });
           refreshFromBroadcast();
         }
@@ -2032,7 +2033,7 @@
         function adjustLevel(delta) {
           mutateSync(function (s, now) {
             MetisTimer.applyScheduleLevelDelta(s, now, delta);
-          }, { urgentCloudPush: true });
+          }, { urgentCloudPush: true, levelMutation: "manual" });
         }
 
         function quickStart() {

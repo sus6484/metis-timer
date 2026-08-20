@@ -1137,7 +1137,11 @@
     var s = MetisTimer.readSyncState() || buildFullSync();
     var now = MetisTimer.now ? MetisTimer.now() : Date.now();
     MetisTimer.applyScheduleLevelDelta(s, now, delta);
-    MetisTimer.writeSyncState(s, { userAction: true, urgentCloudPush: true });
+    MetisTimer.writeSyncState(s, {
+      userAction: true,
+      urgentCloudPush: true,
+      levelMutation: "manual",
+    });
     applySyncToRemoteState(s);
     renderRemote();
   }
@@ -2660,7 +2664,11 @@
       s.displayTime = "00:00";
     }
 
-    MetisTimer.writeSyncState(s, { userAction: true, urgentCloudPush: true });
+    MetisTimer.writeSyncState(s, {
+      userAction: true,
+      urgentCloudPush: true,
+      levelMutation: "reset",
+    });
     applySyncToRemoteState(s);
     renderRemote();
   }
@@ -2827,6 +2835,7 @@
     if (screenRemote.classList.contains("is-active")) {
       renderRemote({ forceMeta: true });
     }
+    startFirestoreBuyInSyncIfNeeded();
     if (result && result.deletedIds && result.deletedIds.length) {
       var sig = result.deletedIds.slice().sort().join(",");
       // soft-delete 문서가 매 스냅샷에 남아 있어도 동일 목록은 한 번만 로그
@@ -2894,18 +2903,8 @@
   }
 
   function bootWithFirestorePresets() {
-    var started = false;
-    function finish() {
-      if (started) return;
-      started = true;
-      startAppAfterCloudSync();
-    }
-    MetisFirestoreSync.startPresetsSync(function (result) {
-      refreshHomeFromPresetsSnapshot(result);
-      finish();
-    });
-    MetisFirestoreSync.whenPresetsReady(finish);
-    setTimeout(finish, 8000);
+    MetisFirestoreSync.startPresetsSync(refreshHomeFromPresetsSnapshot);
+    startAppAfterCloudSync();
   }
 
   function bootApp() {

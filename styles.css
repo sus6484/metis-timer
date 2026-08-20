@@ -263,6 +263,11 @@ input {
   background: #ef4444;
 }
 
+.cloud-sync-badge[data-state="stalled"] .cloud-sync-dot {
+  background: #f97316;
+  animation: cloud-sync-pulse 1.4s ease-in-out infinite;
+}
+
 .cloud-sync-badge[data-state="idle"] .cloud-sync-dot {
   background: #64748b;
 }

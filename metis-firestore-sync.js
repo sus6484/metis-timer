@@ -29,6 +29,7 @@ import {
   onSnapshot,
   collection,
   writeBatch,
+  runTransaction,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
 
 /** @type {boolean} false 로 바꾸면 클라우드 PUSH 디바운스 비활성화 */
@@ -119,6 +120,10 @@ var CONTROL_PUSH_MIN_MS = 400;
 var CONTROL_PUSH_MAX_PER_MIN = 30;
 var controlPushWindowStart = 0;
 var controlPushWindowCount = 0;
+/** 이번 구독에서 서버(원본) 문서를 아직 못 받음 */
+var timerControlServerHydrated = false;
+var controlHydratePending = false;
+var controlCacheFallbackTimer = null;
 
 /** Firestore 서버 시각 offset 재측정 주기 (최소 5분, 단축 불가) */
 var CLOCK_RESYNC_MS = 5 * 60 * 1000;
@@ -352,7 +357,9 @@ function buildControlPayload(slice, presetId) {
       Math.floor(Number(slice.totalScheduleCommittedSec) || 0)
     ),
     levelAdvanceKind:
-      slice.levelAdvanceKind === "expire" || slice.levelAdvanceKind === "manual"
+      slice.levelAdvanceKind === "expire" ||
+      slice.levelAdvanceKind === "manual" ||
+      slice.levelAdvanceKind === "reset"
         ? slice.levelAdvanceKind
         : null,
     timerUpdatedAt: Number(slice.timerUpdatedAt) || 0,
@@ -432,6 +439,141 @@ function saveBuyInStats(presetId, stats, options) {
   );
 }
 
+/** 디바운스 동안 로컬이 이미 다음 레벨을 받았으면 그 최신 슬라이스를 보낸다. */
+function resolveLiveControlPayload(presetId, fallbackSlice) {
+  var pid = String(presetId || "");
+  if (
+    window.MetisTimer &&
+    typeof MetisTimer.readSyncState === "function" &&
+    typeof MetisTimer.pickTimerSyncSlice === "function"
+  ) {
+    var liveState = MetisTimer.readSyncState();
+    if (liveState) {
+      var livePid =
+        (typeof MetisTimer.getSyncPresetId === "function" &&
+          MetisTimer.getSyncPresetId()) ||
+        liveState.activePresetId ||
+        "";
+      if (String(livePid) === pid) {
+        var fresh = MetisTimer.pickTimerSyncSlice(liveState, pid);
+        if (fresh && fresh.timer) return buildControlPayload(fresh, pid);
+      }
+    }
+  }
+  if (!fallbackSlice) return null;
+  return buildControlPayload(fallbackSlice, pid);
+}
+
+/**
+ * 서버 문서가 더 최신이면 쓰지 않는다 (지연된 핸드폰 페이로드가 레벨을 되돌리지 못하게).
+ */
+var controlRetryTimer = null;
+var controlRetryAttempt = 0;
+var controlRetryPresetId = "";
+var CONTROL_RETRY_BASE_MS = 700;
+var CONTROL_RETRY_MAX_MS = 20000;
+
+function clearTimerControlRetry() {
+  if (controlRetryTimer) {
+    clearTimeout(controlRetryTimer);
+    controlRetryTimer = null;
+  }
+  controlRetryAttempt = 0;
+  controlRetryPresetId = "";
+}
+
+function armTimerControlRetry(presetId) {
+  var pid = String(presetId || "");
+  if (!pid) return;
+  if (controlRetryTimer) return;
+  controlRetryPresetId = pid;
+  var delay = Math.min(
+    CONTROL_RETRY_MAX_MS,
+    CONTROL_RETRY_BASE_MS * Math.pow(2, Math.min(controlRetryAttempt, 5))
+  );
+  controlRetryAttempt += 1;
+  setCloudSyncBadgeState("syncing", "동기화 재시도");
+  console.warn("[MetisFirestore] 타이머 제어 PUSH 재시도 예약", {
+    presetId: pid,
+    attempt: controlRetryAttempt,
+    delayMs: delay,
+  });
+  controlRetryTimer = setTimeout(function () {
+    controlRetryTimer = null;
+    retryTimerControlPush(pid);
+  }, delay);
+}
+
+function retryTimerControlPush(presetId) {
+  var livePayload = resolveLiveControlPayload(presetId, null);
+  if (!livePayload || !livePayload.presetId) {
+    armTimerControlRetry(presetId);
+    return Promise.resolve({ skipped: false, error: "no-payload" });
+  }
+  return pushTimerControlPayload(livePayload, { isRetry: true, urgent: true });
+}
+
+function commitTimerControlIfNewer(payload) {
+  var ref = controlRef(payload.presetId);
+  return runTransaction(db, function (transaction) {
+    return transaction.get(ref).then(function (snap) {
+      if (snap.exists()) {
+        var existing = buildControlPayload(snap.data(), payload.presetId);
+        if (
+          window.MetisTimer &&
+          typeof MetisTimer.isStaleTimerControlWrite === "function" &&
+          MetisTimer.isStaleTimerControlWrite(payload, existing)
+        ) {
+          console.log("[MetisFirestore|PUSH|saveTimerControl:낡은쓰기거부]", {
+            presetId: payload.presetId,
+            inLA: payload.lastActionTimestamp,
+            exLA: existing.lastActionTimestamp,
+            inLevel: payload.timer && payload.timer.levelIndex,
+            exLevel: existing.timer && existing.timer.levelIndex,
+            kind: payload.levelAdvanceKind,
+          });
+          return { skipped: true };
+        }
+      }
+      transaction.set(ref, payload, { merge: true });
+      return { skipped: false };
+    });
+  }).catch(function (err) {
+    console.warn("[MetisFirestore] 타이머 제어 저장 실패:", err);
+    return { skipped: false, error: err };
+  });
+}
+
+function pushTimerControlPayload(payload, options) {
+  options = options || {};
+  if (!payload || !payload.presetId) {
+    return Promise.resolve({ skipped: true, error: "no-payload" });
+  }
+  setCloudSyncBadgeState("syncing", "동기화 중");
+  return commitTimerControlIfNewer(payload).then(function (result) {
+    if (!result || result.error) {
+      armTimerControlRetry(payload.presetId);
+      return result || { skipped: false, error: true };
+    }
+    if (result.skipped) {
+      clearTimerControlRetry();
+      setCloudSyncBadgeState("synced", "동기화됨");
+      return result;
+    }
+    clearTimerControlRetry();
+    lastControlPushSig = controlSignature(payload);
+    lastControlPushAt = Date.now();
+    setCloudSyncBadgeState("synced", "동기화됨");
+    console.log("[MetisFirestore|PUSH|saveTimerControl:ack]", {
+      presetId: payload.presetId,
+      levelIndex: payload.timer && payload.timer.levelIndex,
+      lastActionTimestamp: payload.lastActionTimestamp,
+      retry: !!options.isRetry,
+    });
+    return result;
+  });
+}
+
 /**
  * 타이머 제어 상태를 Firestore에 저장
  * @param {string} presetId
@@ -459,12 +601,13 @@ function saveTimerControl(presetId, slice, options) {
   var sig = controlSignature(payload);
   var now = Date.now();
   var urgent = !!options.urgent;
-  // 시작/일시정지 등 urgent 는 기기 간 체감을 위해 즉시 전송
+  var isRetry = !!options.isRetry;
+  // 시작/일시정지·레벨업은 기기 간 체감을 위해 즉시 전송
   var pushOpts = Object.assign({}, options, {
-    immediate: !!options.immediate || urgent,
+    immediate: !!options.immediate || urgent || isRetry,
   });
 
-  if (!urgent) {
+  if (!urgent && !isRetry) {
     if (sig === lastControlPushSig) return;
     if (
       lastControlPushAt > 0 &&
@@ -473,33 +616,37 @@ function saveTimerControl(presetId, slice, options) {
       return;
     }
     if (!allowControlPushRate(now)) return;
-  } else if (sig === lastControlPushSig && lastControlPushAt > 0 && now - lastControlPushAt < 50) {
-    // 동일 urgent 연타만 무시
+  } else if (
+    !isRetry &&
+    sig === lastControlPushSig &&
+    lastControlPushAt > 0 &&
+    now - lastControlPushAt < 50
+  ) {
+    // 동일 urgent 연타만 무시 (재시도는 통과)
     return;
   }
 
-  lastControlPushSig = sig;
-  lastControlPushAt = now;
-
   var channel = "timerControl:" + payload.presetId;
+  var fallbackSlice = slice;
   return scheduleFirestorePush(
     channel,
     function () {
+      var livePayload = resolveLiveControlPayload(payload.presetId, fallbackSlice);
       console.log("[MetisFirestore|PUSH|saveTimerControl]", {
-        presetId: payload.presetId,
+        presetId: livePayload.presetId,
         urgent: urgent,
+        retry: isRetry,
         heartbeat: !!options.heartbeat,
-        lastActionTimestamp: payload.lastActionTimestamp,
-        isRunning: payload.timer && payload.timer.isRunning,
-        endAt: payload.timer && payload.timer.endAt,
-        levelIndex: payload.timer && payload.timer.levelIndex,
-        timerStatus: payload.timerStatus,
+        lastActionTimestamp: livePayload.lastActionTimestamp,
+        isRunning: livePayload.timer && livePayload.timer.isRunning,
+        endAt: livePayload.timer && livePayload.timer.endAt,
+        levelIndex: livePayload.timer && livePayload.timer.levelIndex,
+        timerStatus: livePayload.timerStatus,
       });
-      return setDoc(controlRef(payload.presetId), payload, { merge: true }).catch(
-        function (err) {
-          console.warn("[MetisFirestore] 타이머 제어 저장 실패:", err);
-        }
-      );
+      return pushTimerControlPayload(livePayload, {
+        urgent: urgent,
+        isRetry: isRetry,
+      });
     },
     pushOpts
   );
@@ -578,6 +725,11 @@ function notifyTimerControlUi(detail) {
 
 var cloudSyncBadgeId = "";
 var cloudSyncBadgeUnsub = null;
+var cloudSyncBadgeTimer = null;
+var CLOUD_SYNC_BADGE_STALL_MS = 12000;
+var timerControlHasSnapshot = false;
+var pendingControlSnap = null;
+var pendingBuyInSnap = null;
 
 function setCloudSyncBadgeState(state, label) {
   var id = cloudSyncBadgeId || "cloud-sync-badge";
@@ -587,25 +739,47 @@ function setCloudSyncBadgeState(state, label) {
   el.setAttribute("data-state", state || "idle");
   var lab = el.querySelector(".cloud-sync-label");
   if (lab) lab.textContent = label || "";
+  if (cloudSyncBadgeTimer) {
+    clearTimeout(cloudSyncBadgeTimer);
+    cloudSyncBadgeTimer = null;
+  }
+  if (state === "syncing") {
+    cloudSyncBadgeTimer = setTimeout(function () {
+      cloudSyncBadgeTimer = null;
+      var cur =
+        typeof document !== "undefined" ? document.getElementById(id) : null;
+      if (cur && cur.getAttribute("data-state") === "syncing") {
+        setCloudSyncBadgeState("stalled", "연결 지연");
+      }
+    }, CLOUD_SYNC_BADGE_STALL_MS);
+  }
 }
 
 function bindCloudSyncBadge(elementId) {
   cloudSyncBadgeId = elementId || "cloud-sync-badge";
-  setCloudSyncBadgeState("syncing", "동기화 중");
+  if (timerControlHasSnapshot) {
+    setCloudSyncBadgeState("synced", "동기화됨");
+  } else {
+    setCloudSyncBadgeState("syncing", "동기화 중");
+  }
   if (cloudSyncBadgeUnsub) return;
   cloudSyncBadgeUnsub = true;
   window.addEventListener("metis-timer-control-applied", function () {
     setCloudSyncBadgeState("synced", "동기화됨");
   });
   window.addEventListener("metis-firebase-ready", function () {
-    setCloudSyncBadgeState("syncing", "동기화 중");
+    if (!timerControlHasSnapshot) {
+      setCloudSyncBadgeState("syncing", "동기화 중");
+    }
   });
   if (typeof navigator !== "undefined") {
     window.addEventListener("offline", function () {
       setCloudSyncBadgeState("offline", "오프라인");
     });
     window.addEventListener("online", function () {
-      setCloudSyncBadgeState("syncing", "동기화 중");
+      if (!timerControlHasSnapshot) {
+        setCloudSyncBadgeState("syncing", "동기화 중");
+      }
     });
   }
 }
@@ -613,8 +787,12 @@ function bindCloudSyncBadge(elementId) {
 /**
  * Firestore timerControl → 로컬 적용 (Firestore LWW)
  * 로컬 lastActionTimestamp 가 더 크면(방금 조작) echo 대기만 하고 무시
+ * @param {string} presetId
+ * @param {object} raw
+ * @param {{ bootHydrate?: boolean }=} options
  */
-function applyTimerControlToLocal(presetId, raw) {
+function applyTimerControlToLocal(presetId, raw, options) {
+  options = options || {};
   if (!window.MetisTimer || !raw) return false;
   var pid = String(presetId || "");
   if (!pid) return false;
@@ -634,14 +812,65 @@ function applyTimerControlToLocal(presetId, raw) {
     (MetisTimer.sliceLastActionAt && MetisTimer.sliceLastActionAt(localSlice)) ||
     Number(state.lastActionTimestamp) ||
     0;
+  var localWouldRollback = !!(
+    localSlice &&
+    MetisTimer.isStaleTimerControlWrite &&
+    MetisTimer.isStaleTimerControlWrite(localSlice, cloudSlice)
+  );
+  var cloudIntentional = !!(
+    MetisTimer.isIntentionalLevelMutation
+      ? MetisTimer.isIntentionalLevelMutation(cloudSlice)
+      : cloudSlice.levelAdvanceKind === "manual" ||
+        cloudSlice.levelAdvanceKind === "reset"
+  );
+  var bootGrace = !!(
+    MetisTimer.isBootGraceActive && MetisTimer.isBootGraceActive()
+  );
+  var isOwner = !!(
+    MetisTimer.shouldOwnEngine && MetisTimer.shouldOwnEngine(Date.now())
+  );
+  var cloudIdx = MetisTimer.sliceLevelIndex
+    ? MetisTimer.sliceLevelIndex(cloudSlice)
+    : 0;
+  var localIdx = MetisTimer.sliceLevelIndex
+    ? MetisTimer.sliceLevelIndex(localSlice)
+    : 0;
+  var hydrate = !!options.bootHydrate || controlHydratePending || bootGrace;
 
-  // 로컬이 더 최신 조작이면 Firestore stale 스냅샷 무시 (곧 echo로 맞춰짐)
+  if (hydrate) {
+    if (isOwner && localIdx > cloudIdx) {
+      console.log("[MetisFirestore|PULL|applyTimerControl:부팅로컬선행_서버치유]", {
+        localIdx: localIdx,
+        cloudIdx: cloudIdx,
+        localLA: localLA,
+        remoteLA: remoteLA,
+      });
+      controlHydratePending = false;
+      saveTimerControl(pid, localSlice, { urgent: true, immediate: true });
+      return false;
+    }
+  }
+
+  // 로컬이 더 최신 조작이면 Firestore stale 스냅샷 무시 (곧 echo로 맞춰짐).
+  // 단, 로컬이 레벨을 되돌리는 낡은 쓰기이거나, 클라우드가 LEVEL±/종료면 따른다.
+  // 새 기기 부팅(팔로워)은 캐시 LA가 앞서 있어도 서버를 따른다.
   if (remoteLA > 0 && localLA > remoteLA) {
-    console.log("[MetisFirestore|PULL|applyTimerControl:로컬조작최신무시]", {
+    if (!localWouldRollback && !cloudIntentional && !(hydrate && !isOwner)) {
+      console.log("[MetisFirestore|PULL|applyTimerControl:로컬조작최신무시]", {
+        localLA: localLA,
+        remoteLA: remoteLA,
+      });
+      return false;
+    }
+    console.log("[MetisFirestore|PULL|applyTimerControl:로컬보다클라우드우선]", {
       localLA: localLA,
       remoteLA: remoteLA,
+      cloudIntentional: cloudIntentional,
+      localWouldRollback: localWouldRollback,
+      hydrate: hydrate,
+      cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
+      localLevel: localSlice && localSlice.timer && localSlice.timer.levelIndex,
     });
-    return false;
   }
 
   // 로컬이 이미 스케줄 종료인데 동일/이전 세대의 재생 중 클라우드면 무시
@@ -670,6 +899,31 @@ function applyTimerControlToLocal(presetId, raw) {
   }
 
   if (
+    localSlice &&
+    MetisTimer.isStaleTimerControlWrite &&
+    MetisTimer.isStaleTimerControlWrite(cloudSlice, localSlice)
+  ) {
+    if (hydrate && !isOwner) {
+      console.log("[MetisFirestore|PULL|applyTimerControl:팔로워부팅_서버강제]", {
+        localLA: localLA,
+        remoteLA: remoteLA,
+        cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
+        localLevel: localSlice.timer && localSlice.timer.levelIndex,
+      });
+    } else {
+      console.log("[MetisFirestore|PULL|applyTimerControl:낡은레벨롤백거부]", {
+        localLA: localLA,
+        remoteLA: remoteLA,
+        cloudLevel: cloudSlice.timer && cloudSlice.timer.levelIndex,
+        localLevel: localSlice.timer && localSlice.timer.levelIndex,
+        kind: cloudSlice.levelAdvanceKind,
+      });
+      return false;
+    }
+  }
+
+  if (
+    !hydrate &&
     MetisTimer.isPrematureCloudExpire &&
     MetisTimer.isPrematureCloudExpire(cloudSlice, localSlice, MetisTimer.now())
   ) {
@@ -683,6 +937,7 @@ function applyTimerControlToLocal(presetId, raw) {
 
   // 동일 조작 세대에서 로컬 진행도가 더 앞서면(낙관적 레벨 만료) 클라우드 롤백 거부
   if (
+    !hydrate &&
     remoteLA === localLA &&
     localSlice &&
     MetisTimer.timerGameplayRank &&
@@ -723,15 +978,22 @@ function applyTimerControlToLocal(presetId, raw) {
     state.timer && state.timer.levelIndex != null ? state.timer.levelIndex : 0;
 
   // Firestore 우선: 클라우드 조작이 더 최신일 때만 강제 적용
-  // (동일 LA 는 forceApply 금지 — 낙관적 레벨 만료/종료를 낡은 스냅샷이 덮지 않게)
+  // 부팅 hydrate(새 기기/팔로워)는 로컬 캐시보다 서버를 강제 채택
   var applied = MetisTimer.applyTimerSyncSlice(state, cloudSlice, {
-    forceApply: remoteLA > localLA,
+    forceApply:
+      remoteLA > localLA ||
+      localWouldRollback ||
+      cloudIntentional ||
+      (hydrate && !isOwner),
+    bootHydrate: hydrate,
   });
 
   if (!applied) {
-    // forceApply인데도 false면 인자 문제 — 타임스탬프만 맞춰 재시도하지 않음
+    controlHydratePending = false;
     return false;
   }
+
+  controlHydratePending = false;
 
   MetisTimer.writeSyncState(state, {
     skipCloudPush: true,
@@ -767,12 +1029,65 @@ function applyTimerControlToLocal(presetId, raw) {
   return result;
 }
 
+function applyBuyInSnapshot(pid, snap) {
+  if (!window.MetisTimer) {
+    pendingBuyInSnap = { pid: pid, snap: snap };
+    return false;
+  }
+  if (!snap || !snap.exists()) {
+    console.log("[MetisFirestore|PULL|buyIn:문서없음]", { presetId: pid });
+    return false;
+  }
+  return applyBuyInToLocal(pid, snap.data());
+}
+
+function applyControlSnapshot(pid, snap, options) {
+  options = options || {};
+  if (!window.MetisTimer) {
+    pendingControlSnap = { pid: pid, snap: snap, options: options };
+    return false;
+  }
+  timerControlHasSnapshot = true;
+  timerControlServerHydrated = true;
+  if (!snap || !snap.exists()) {
+    console.log("[MetisFirestore|PULL|timerControl:문서없음]", {
+      presetId: pid,
+    });
+    controlHydratePending = false;
+    setCloudSyncBadgeState("synced", "동기화됨");
+    return false;
+  }
+  var result = applyTimerControlToLocal(pid, snap.data(), options);
+  if (!result) {
+    setCloudSyncBadgeState("synced", "동기화됨");
+  }
+  return result;
+}
+
+function flushQueuedLiveSnaps() {
+  if (pendingControlSnap && window.MetisTimer) {
+    var q = pendingControlSnap;
+    pendingControlSnap = null;
+    if (!controlPresetId || String(q.pid) === String(controlPresetId)) {
+      applyControlSnapshot(q.pid, q.snap, q.options || { bootHydrate: true });
+    }
+  }
+  if (pendingBuyInSnap && window.MetisTimer) {
+    var b = pendingBuyInSnap;
+    pendingBuyInSnap = null;
+    if (!buyInPresetId || String(b.pid) === String(buyInPresetId)) {
+      applyBuyInSnapshot(b.pid, b.snap);
+    }
+  }
+}
+
 function stopBuyInSync() {
   if (buyInUnsub) {
     buyInUnsub();
     buyInUnsub = null;
   }
   buyInPresetId = "";
+  pendingBuyInSnap = null;
 }
 
 function stopTimerControlSync() {
@@ -780,7 +1095,14 @@ function stopTimerControlSync() {
     controlUnsub();
     controlUnsub = null;
   }
+  if (controlCacheFallbackTimer) {
+    clearTimeout(controlCacheFallbackTimer);
+    controlCacheFallbackTimer = null;
+  }
   controlPresetId = "";
+  pendingControlSnap = null;
+  timerControlServerHydrated = false;
+  controlHydratePending = false;
 }
 
 function startBuyInSync(presetId, onApplied) {
@@ -803,11 +1125,7 @@ function startBuyInSync(presetId, onApplied) {
   buyInUnsub = onSnapshot(
     buyInRef(pid),
     function (snap) {
-      if (!snap.exists()) {
-        console.log("[MetisFirestore|PULL|buyIn:문서없음]", { presetId: pid });
-        return;
-      }
-      var changed = applyBuyInToLocal(pid, snap.data());
+      var changed = applyBuyInSnapshot(pid, snap);
       if (changed && typeof buyInOnApplied === "function") {
         buyInOnApplied(true);
       }
@@ -827,6 +1145,12 @@ function startTimerControlSync(presetId, onApplied) {
   if (controlUnsub && controlPresetId === pid) {
     controlOnApplied =
       typeof onApplied === "function" ? onApplied : controlOnApplied;
+    if (timerControlHasSnapshot) {
+      setCloudSyncBadgeState("synced", "동기화됨");
+      if (typeof controlOnApplied === "function") {
+        controlOnApplied({ changed: false, presetId: pid });
+      }
+    }
     return;
   }
 
@@ -834,25 +1158,52 @@ function startTimerControlSync(presetId, onApplied) {
   stopTimerControlSync();
   controlPresetId = pid;
   controlOnApplied = typeof onApplied === "function" ? onApplied : null;
+  timerControlHasSnapshot = false;
+  timerControlServerHydrated = false;
+  controlHydratePending = true;
   setCloudSyncBadgeState("syncing", "동기화 중");
 
   console.log("[MetisFirestore|PULL|startTimerControlSync]", { presetId: pid });
+
+  fetchTimerControlFromServer(pid);
+
+  if (controlCacheFallbackTimer) clearTimeout(controlCacheFallbackTimer);
+  controlCacheFallbackTimer = setTimeout(function () {
+    controlCacheFallbackTimer = null;
+    if (timerControlServerHydrated) return;
+    if (pendingControlSnap && String(pendingControlSnap.pid) === pid) {
+      console.warn(
+        "[MetisFirestore] 서버 hydrate 대기 초과 — 캐시 스냅샷 사용",
+        { presetId: pid }
+      );
+      timerControlServerHydrated = true;
+      var queued = pendingControlSnap;
+      pendingControlSnap = null;
+      applyControlSnapshot(queued.pid, queued.snap, { bootHydrate: true });
+    }
+  }, 3500);
+
   controlUnsub = onSnapshot(
     controlRef(pid),
     function (snap) {
-      if (!snap.exists()) {
-        console.log("[MetisFirestore|PULL|timerControl:문서없음]", {
+      var fromCache = !!(snap.metadata && snap.metadata.fromCache);
+      if (fromCache && !timerControlServerHydrated) {
+        pendingControlSnap = { pid: pid, snap: snap, options: { bootHydrate: true } };
+        console.log("[MetisFirestore|PULL|timerControl:캐시대기]", {
           presetId: pid,
         });
-        setCloudSyncBadgeState("synced", "동기화됨");
         return;
       }
-      var result = applyTimerControlToLocal(pid, snap.data());
+      timerControlServerHydrated = true;
+      if (controlCacheFallbackTimer) {
+        clearTimeout(controlCacheFallbackTimer);
+        controlCacheFallbackTimer = null;
+      }
+      var result = applyControlSnapshot(pid, snap, {
+        bootHydrate: controlHydratePending,
+      });
       if (result && result.changed && typeof controlOnApplied === "function") {
         controlOnApplied(result);
-      } else if (!result) {
-        // 변경 없어도 연결은 성공 — 대기 배지 해제
-        setCloudSyncBadgeState("synced", "동기화됨");
       }
     },
     function (err) {
@@ -860,6 +1211,32 @@ function startTimerControlSync(presetId, onApplied) {
       setCloudSyncBadgeState("offline", "오류");
     }
   );
+}
+
+/** IndexedDB 캐시를 건너뛰고 서버 원본 timerControl 을 적용 */
+function fetchTimerControlFromServer(presetId) {
+  var pid = String(presetId || "");
+  if (!pid) return Promise.resolve(null);
+  return getDocFromServer(controlRef(pid))
+    .then(function (snap) {
+      if (controlCacheFallbackTimer) {
+        clearTimeout(controlCacheFallbackTimer);
+        controlCacheFallbackTimer = null;
+      }
+      console.log("[MetisFirestore|PULL|timerControl:서버원본]", {
+        presetId: pid,
+        exists: !!(snap && snap.exists && snap.exists()),
+      });
+      var result = applyControlSnapshot(pid, snap, { bootHydrate: true });
+      if (result && result.changed && typeof controlOnApplied === "function") {
+        controlOnApplied(result);
+      }
+      return result;
+    })
+    .catch(function (err) {
+      console.warn("[MetisFirestore] timerControl 서버 원본 읽기 실패:", err);
+      return null;
+    });
 }
 
 /** 바인 + 타이머 제어 리스너를 함께 시작 */
@@ -1689,7 +2066,70 @@ function loadLocalPresetsList() {
   }
 }
 
-/** timer.html 부팅: URL id → 로컬 프리셋 → fallback */
+function upsertLocalPreset(normalized) {
+  if (!normalized || !normalized.id) return;
+  var local = loadLocalPresetsRaw();
+  var sid = String(normalized.id);
+  var found = false;
+  for (var i = 0; i < local.length; i++) {
+    if (local[i] && String(local[i].id) === sid) {
+      local[i] = normalized;
+      found = true;
+      break;
+    }
+  }
+  if (!found) local.push(normalized);
+  saveLocalPresetsRaw(filterDeletedPresetsFs(local));
+}
+
+/** 부팅용: 활성 프리셋 문서만 먼저 가져와 블라인드/메타를 빨리 채운다 */
+function fetchActivePresetFast(presetId) {
+  var pid = String(presetId || "");
+  if (!pid) return Promise.resolve(null);
+  return getDocFromServer(presetDocRef(pid))
+    .then(function (snap) {
+      if (!snap || !snap.exists()) return null;
+      var data = snap.data() || {};
+      data.id = data.id || snap.id;
+      if (
+        data.deleted === true ||
+        data.deleted === "true" ||
+        data.deleted === 1
+      ) {
+        return null;
+      }
+      var normalized = normalizePresetForFs(data);
+      if (!normalized || normalized.deleted) return null;
+      upsertLocalPreset(normalized);
+      console.log("[MetisFirestore|PULL|activePresetFast]", { presetId: pid });
+      if (
+        window.MetisTimer &&
+        typeof MetisTimer.syncAllPresetsMetadataFromStorage === "function"
+      ) {
+        MetisTimer.syncAllPresetsMetadataFromStorage();
+      }
+      if (
+        window.MetisTimer &&
+        typeof MetisTimer.notifyLocalSyncListeners === "function"
+      ) {
+        MetisTimer.notifyLocalSyncListeners();
+      }
+      try {
+        window.dispatchEvent(
+          new CustomEvent("metis-presets-remote-applied", {
+            detail: { changed: true, presets: loadLocalPresetsList(), fast: true },
+          })
+        );
+      } catch (e0) {}
+      return normalized;
+    })
+    .catch(function (err) {
+      console.warn("[MetisFirestore] 활성 프리셋 선로드 실패:", err);
+      return null;
+    });
+}
+
+/** timer.html 부팅: URL id 우선 (로컬 캐시 없어도 해당 대회에 연결) */
 function resolveBootPresetId() {
   var urlId = null;
   try {
@@ -1697,10 +2137,9 @@ function resolveBootPresetId() {
       urlId = new URLSearchParams(location.search).get("id");
     }
   } catch (e0) {}
+  if (urlId) return String(urlId);
 
   var list = loadLocalPresetsList();
-  if (urlId && findPresetByIdLocal(list, urlId)) return String(urlId);
-
   if (list.length) {
     var aid = "";
     try {
@@ -1710,7 +2149,7 @@ function resolveBootPresetId() {
     return String(list[0].id);
   }
 
-  return urlId || "preset_default";
+  return "preset_default";
 }
 
 function ensureTimerStateBootstrapped() {
@@ -1735,7 +2174,7 @@ function ensureTimerStateBootstrapped() {
 }
 
 /**
- * timer.html: Firestore 프리셋 sync → preset id 결정 → timer-core/metis-audio 로드
+ * timer.html: 타이머 제어를 먼저 구독하고, 프리셋 전체는 백그라운드
  */
 function bootTimerPage(resolvePresetIdFn) {
   var resolveId =
@@ -1745,44 +2184,16 @@ function bootTimerPage(resolvePresetIdFn) {
 
   function continueBoot() {
     window.__METIS_TIMER_PRESET_ID = resolveId();
-    return loadScript("timer-core.js")
-      .then(function () {
-        flushPendingClockOffset();
-        // 모듈 로드 시 이미 보정했으면 5분 가드로 스킵됨
-        syncServerClockOffset(false);
-        if (
-          window.MetisTimer &&
-          window.MetisTimer.syncAllPresetsMetadataFromStorage
-        ) {
-          window.MetisTimer.syncAllPresetsMetadataFromStorage();
-        }
-        ensureTimerStateBootstrapped();
-        return loadScript("metis-audio.js");
-      })
-      .then(function () {
-        window.__METIS_TIMER_BOOT_DONE = true;
-        window.dispatchEvent(new Event("metis-timer-boot-done"));
-      })
-      .catch(function (err) {
-        console.warn("[MetisFirestore] 타이머 부팅 실패:", err);
-        window.__METIS_TIMER_PRESET_ID =
-          typeof resolveId === "function" ? resolveId() : "preset_default";
-        window.__METIS_TIMER_BOOT_DONE = true;
-        window.dispatchEvent(new Event("metis-timer-boot-done"));
-      });
-  }
-
-  function waitPresetsThenBoot() {
-    return new Promise(function (resolve) {
-      var done = false;
-      function finish() {
-        if (done) return;
-        done = true;
-        resolve();
-      }
+    var pid = window.__METIS_TIMER_PRESET_ID
+      ? String(window.__METIS_TIMER_PRESET_ID)
+      : "";
+    bindCloudSyncBadge("cloud-sync-badge");
+    if (pid) {
+      fetchActivePresetFast(pid);
+      startLiveSync(pid);
+    }
+    if (isPresetsLive) {
       startPresetsSync(function (result) {
-        finish();
-        // 부팅 이후 스냅샷에서도 타이머 메타 갱신 (finish는 1회만 동작)
         if (
           window.MetisTimer &&
           typeof MetisTimer.syncAllPresetsMetadataFromStorage === "function"
@@ -1797,14 +2208,54 @@ function bootTimerPage(resolvePresetIdFn) {
           );
         } catch (e0) {}
       });
-      whenPresetsReady(finish);
-      setTimeout(finish, 8000);
-    }).then(continueBoot);
+    }
+    return loadScript("timer-core.js")
+      .then(function () {
+        flushPendingClockOffset();
+        if (pid && window.MetisTimer && window.MetisTimer.setSyncPresetId) {
+          window.MetisTimer.setSyncPresetId(pid);
+        }
+        flushQueuedLiveSnaps();
+        syncServerClockOffset(false);
+        if (
+          window.MetisTimer &&
+          window.MetisTimer.syncAllPresetsMetadataFromStorage
+        ) {
+          window.MetisTimer.syncAllPresetsMetadataFromStorage();
+        }
+        ensureTimerStateBootstrapped();
+        return loadScript("metis-audio.js");
+      })
+      .then(function () {
+        flushQueuedLiveSnaps();
+        if (!pid || timerControlServerHydrated) return;
+        var startedAt = Date.now();
+        return new Promise(function (resolve) {
+          function check() {
+            if (timerControlServerHydrated || Date.now() - startedAt >= 4000) {
+              resolve();
+              return;
+            }
+            setTimeout(check, 50);
+          }
+          check();
+        });
+      })
+      .then(function () {
+        flushQueuedLiveSnaps();
+        if (window.__METIS_TIMER_BOOT_DONE) return;
+        window.__METIS_TIMER_BOOT_DONE = true;
+        window.dispatchEvent(new Event("metis-timer-boot-done"));
+      })
+      .catch(function (err) {
+        console.warn("[MetisFirestore] 타이머 부팅 실패:", err);
+        window.__METIS_TIMER_PRESET_ID = pid || "preset_default";
+        if (window.__METIS_TIMER_BOOT_DONE) return;
+        window.__METIS_TIMER_BOOT_DONE = true;
+        window.dispatchEvent(new Event("metis-timer-boot-done"));
+      });
   }
 
-  if (isPresetsLive) {
-    return waitPresetsThenBoot();
-  }
   return continueBoot();
 }
 
@@ -1854,6 +2305,7 @@ window.MetisFirestoreSync = {
   resolveBootPresetId: resolveBootPresetId,
   ensureTimerStateBootstrapped: ensureTimerStateBootstrapped,
   bootTimerPage: bootTimerPage,
+  fetchTimerControlFromServer: fetchTimerControlFromServer,
   bindCloudSyncBadge: bindCloudSyncBadge,
   setCloudSyncBadgeState: setCloudSyncBadgeState,
   syncServerClockOffset: syncServerClockOffset,
@@ -1863,5 +2315,16 @@ window.MetisFirestoreSync = {
 };
 
 startClockOffsetSync();
+if (typeof window !== "undefined") {
+  window.addEventListener("online", function () {
+    if (!controlRetryPresetId) return;
+    var pid = controlRetryPresetId;
+    if (controlRetryTimer) {
+      clearTimeout(controlRetryTimer);
+      controlRetryTimer = null;
+    }
+    retryTimerControlPush(pid);
+  });
+}
 window.dispatchEvent(new Event("metis-firebase-ready"));
 console.log("[MetisFirestore] 준비 완료 (바인 + 타이머 제어 + 프리셋 + 시계보정)");
