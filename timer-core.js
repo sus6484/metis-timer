@@ -232,8 +232,10 @@
     el.setAttribute("data-metis-bg", token);
     if (rec && rec.dataUrl) {
       el.style.backgroundImage = "url(" + JSON.stringify(rec.dataUrl) + ")";
+      el.classList.add("has-custom-bg");
     } else {
       el.style.backgroundImage = "";
+      el.classList.remove("has-custom-bg");
     }
   }
 

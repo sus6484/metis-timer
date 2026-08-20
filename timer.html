@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <title>Metis — 타이머</title>
-    <link rel="stylesheet" href="styles.css?v=20260820b" />
+    <link rel="stylesheet" href="styles.css?v=20260820c" />
     <style>
       :root {
         color-scheme: dark;
@@ -76,6 +76,9 @@
         background: rgba(0, 0, 0, 0.8);
         pointer-events: none;
         z-index: 0;
+      }
+      .timer-stage.has-custom-bg::before {
+        background: rgba(0, 0, 0, 0.42);
       }
       .timer-stage > * {
         z-index: 1;
@@ -840,7 +843,7 @@
       })();
     </script>
 
-    <script>window.__METIS_ASSET_V = "20260820b";</script>
+    <script>window.__METIS_ASSET_V = "20260820d";</script>
     <script type="module" src="firebase.js?v=20260820b"></script>
     <script type="module" src="metis-firestore-sync.js?v=20260820b"></script>
     <script>
