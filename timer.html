@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <title>Metis — 타이머</title>
-    <link rel="stylesheet" href="styles.css?v=20260820a" />
+    <link rel="stylesheet" href="styles.css?v=20260820b" />
     <style>
       :root {
         color-scheme: dark;
@@ -840,9 +840,9 @@
       })();
     </script>
 
-    <script>window.__METIS_ASSET_V = "20260820a";</script>
-    <script type="module" src="firebase.js?v=20260820a"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260820a"></script>
+    <script>window.__METIS_ASSET_V = "20260820b";</script>
+    <script type="module" src="firebase.js?v=20260820b"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260820b"></script>
     <script>
       (function () {
         function startBoot() {
@@ -876,6 +876,10 @@
 
         function $(id) {
           return document.getElementById(id);
+        }
+
+        if (window.MetisTimer && MetisTimer.applyTimerStageBackground) {
+          MetisTimer.applyTimerStageBackground($("timer-stage"));
         }
 
         /** 단일 타이머 루프에서 동일 값이면 DOM 스킵 (불필요 리페인트 방지) */
@@ -1485,6 +1489,9 @@
                 : Date.now();
 
           setClockDisplay(rem);
+          if (MetisTimer.applyTimerStageBackground) {
+            MetisTimer.applyTimerStageBackground($("timer-stage"));
+          }
           textIf("el-title", s.tournamentName || "토너먼트");
 
           var levels = MetisTimer.getActiveLevels(s);
@@ -1749,6 +1756,9 @@
         }
 
         function refreshFromBroadcast() {
+          if (MetisTimer.applyTimerStageBackground) {
+            MetisTimer.applyTimerStageBackground($("timer-stage"));
+          }
           var s = MetisTimer.readSyncState();
           if (!s) return;
           var now = MetisTimer.now ? MetisTimer.now() : Date.now();

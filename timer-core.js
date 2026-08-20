@@ -174,6 +174,69 @@
     return syncPresetId;
   }
 
+  var BACKGROUND_STORAGE_KEY = "metis_timerBackground";
+
+  function getTimerBackground() {
+    try {
+      var raw = localStorage.getItem(BACKGROUND_STORAGE_KEY);
+      if (!raw) return null;
+      var rec = JSON.parse(raw);
+      if (
+        !rec ||
+        typeof rec.dataUrl !== "string" ||
+        rec.dataUrl.indexOf("data:image/") !== 0
+      ) {
+        return null;
+      }
+      return rec;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function broadcastBackgroundChange() {
+    if (bc) {
+      try {
+        bc.postMessage({ type: "sync", t: Date.now() });
+      } catch (e1) {}
+    }
+    notifyLocalSyncListeners();
+  }
+
+  function setTimerBackground(dataUrl, fileName) {
+    if (typeof dataUrl !== "string" || dataUrl.indexOf("data:image/") !== 0) {
+      throw new Error("invalid background image");
+    }
+    var rec = {
+      dataUrl: dataUrl,
+      fileName: fileName != null ? String(fileName) : "",
+      updatedAt: Date.now(),
+    };
+    localStorage.setItem(BACKGROUND_STORAGE_KEY, JSON.stringify(rec));
+    broadcastBackgroundChange();
+    return rec;
+  }
+
+  function clearTimerBackground() {
+    try {
+      localStorage.removeItem(BACKGROUND_STORAGE_KEY);
+    } catch (e) {}
+    broadcastBackgroundChange();
+  }
+
+  function applyTimerStageBackground(el) {
+    if (!el) return;
+    var rec = getTimerBackground();
+    var token = rec && rec.updatedAt ? String(rec.updatedAt) : "default";
+    if (el.getAttribute("data-metis-bg") === token) return;
+    el.setAttribute("data-metis-bg", token);
+    if (rec && rec.dataUrl) {
+      el.style.backgroundImage = "url(" + JSON.stringify(rec.dataUrl) + ")";
+    } else {
+      el.style.backgroundImage = "";
+    }
+  }
+
   var PRESETS_STORAGE_KEY = "metis_blindPresets";
 
   var PRESET_EMBED_KEYS = [
@@ -2303,5 +2366,9 @@
     isPresetMetadataEmpty: isPresetMetadataEmpty,
     flushActivePresetMetadataToTimer: flushActivePresetMetadataToTimer,
     applyActivePresetMetadataOnSwitch: applyActivePresetMetadataOnSwitch,
+    getTimerBackground: getTimerBackground,
+    setTimerBackground: setTimerBackground,
+    clearTimerBackground: clearTimerBackground,
+    applyTimerStageBackground: applyTimerStageBackground,
   };
 })(typeof window !== "undefined" ? window : this);

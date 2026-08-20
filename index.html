@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <title>Metis — 홀덤 타이머 관리</title>
-    <link rel="stylesheet" href="styles.css?v=20260820a" />
+    <link rel="stylesheet" href="styles.css?v=20260820b" />
   </head>
   <body>
     <div class="app">
@@ -88,13 +88,30 @@
                 <output id="output-info-font-scale" for="input-info-font-scale">100%</output>
               </div>
             </label>
-            <label class="remote-meta-field remote-meta-toggle-row" for="input-left-panel-rotate">
-              <input id="input-left-panel-rotate" type="checkbox" />
-              <span class="remote-meta-toggle-copy">
-                <span class="remote-meta-toggle-title">화면전환</span>
-                <span class="remote-meta-toggle-hint">5초마다 INFO·총상금 ↔ 상금목록 (상금 입력 시)</span>
-              </span>
-            </label>
+            <div class="remote-meta-field remote-meta-screen-col">
+              <label class="remote-meta-toggle-row" for="input-left-panel-rotate">
+                <input id="input-left-panel-rotate" type="checkbox" />
+                <span class="remote-meta-toggle-copy">
+                  <span class="remote-meta-toggle-title">화면전환</span>
+                  <span class="remote-meta-toggle-hint">5초마다 INFO·총상금 ↔ 상금목록 (상금 입력 시)</span>
+                </span>
+              </label>
+              <div class="remote-meta-bg-actions">
+                <button type="button" id="btn-pick-background" class="btn-sm purple remote-meta-action-btn">
+                  배경 이미지 선택
+                </button>
+                <input
+                  type="file"
+                  id="input-background-image"
+                  accept="image/*"
+                  hidden
+                  aria-hidden="true"
+                />
+                <button type="button" id="btn-reset-background" class="btn-sm neutral remote-meta-bg-reset" hidden>
+                  기본 이미지
+                </button>
+              </div>
+            </div>
             <div class="remote-meta-field">
               <span class="remote-meta-label">등수별 상금 수정</span>
               <button type="button" id="btn-open-prize-modal" class="btn-sm purple remote-meta-action-btn">
@@ -399,11 +416,11 @@
 
     <div id="save-toast" class="save-toast" role="status" aria-live="polite" hidden></div>
 
-    <script>window.__METIS_ASSET_V = "20260820a";</script>
-    <script type="module" src="firebase.js?v=20260820a"></script>
-    <script type="module" src="metis-firestore-sync.js?v=20260820a"></script>
-    <script src="timer-core.js?v=20260820a"></script>
+    <script>window.__METIS_ASSET_V = "20260820b";</script>
+    <script type="module" src="firebase.js?v=20260820b"></script>
+    <script type="module" src="metis-firestore-sync.js?v=20260820b"></script>
+    <script src="timer-core.js?v=20260820b"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
-    <script src="app.js?v=20260820a"></script>
+    <script src="app.js?v=20260820b"></script>
   </body>
 </html>

@@ -1197,6 +1197,9 @@
   var inputPrizeFontScale = document.getElementById("input-prize-font-scale");
   var outputPrizeFontScale = document.getElementById("output-prize-font-scale");
   var inputLeftPanelRotate = document.getElementById("input-left-panel-rotate");
+  var btnPickBackground = document.getElementById("btn-pick-background");
+  var inputBackgroundImage = document.getElementById("input-background-image");
+  var btnResetBackground = document.getElementById("btn-reset-background");
   var modalPrize = document.getElementById("modal-prize");
   var modalPrizePanel = document.getElementById("modal-prize-panel");
   var modalPrizeTbody = document.getElementById("modal-prize-tbody");
@@ -1859,6 +1862,129 @@
     }
   }
 
+  var BG_MAX_EDGE = 1920;
+  var BG_MAX_INPUT_BYTES = 20 * 1024 * 1024;
+  var BG_JPEG_QUALITIES = [0.82, 0.7, 0.55, 0.4];
+
+  function syncBackgroundPickerUi() {
+    if (!btnResetBackground) return;
+    var rec =
+      window.MetisTimer && typeof MetisTimer.getTimerBackground === "function"
+        ? MetisTimer.getTimerBackground()
+        : null;
+    btnResetBackground.hidden = !rec;
+  }
+
+  function loadImageFromSrc(src) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () {
+        resolve(img);
+      };
+      img.onerror = function () {
+        reject(new Error("image"));
+      };
+      img.src = src;
+    });
+  }
+
+  function drawBackgroundCanvas(img) {
+    var w = img.naturalWidth || img.width;
+    var h = img.naturalHeight || img.height;
+    if (!w || !h) throw new Error("size");
+    var scale = Math.min(1, BG_MAX_EDGE / w, BG_MAX_EDGE / h);
+    var cw = Math.max(1, Math.round(w * scale));
+    var ch = Math.max(1, Math.round(h * scale));
+    var canvas = document.createElement("canvas");
+    canvas.width = cw;
+    canvas.height = ch;
+    var ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(img, 0, 0, cw, ch);
+    return canvas;
+  }
+
+  function trySaveBackground(dataUrl, fileName) {
+    try {
+      MetisTimer.setTimerBackground(dataUrl, fileName);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function applyPickedBackgroundFile(file) {
+    if (!file) return;
+    if (file.size > BG_MAX_INPUT_BYTES) {
+      alert("이미지 파일이 너무 큽니다. 20MB 이하 파일을 선택해 주세요.");
+      return;
+    }
+    if (file.type && file.type.indexOf("image/") !== 0) {
+      alert("이미지 파일만 선택할 수 있습니다.");
+      return;
+    }
+    if (btnPickBackground) btnPickBackground.disabled = true;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var src = String(reader.result || "");
+      loadImageFromSrc(src)
+        .then(function (img) {
+          var canvas = drawBackgroundCanvas(img);
+          var saved = false;
+          for (var i = 0; i < BG_JPEG_QUALITIES.length; i++) {
+            var dataUrl = canvas.toDataURL("image/jpeg", BG_JPEG_QUALITIES[i]);
+            if (trySaveBackground(dataUrl, file.name)) {
+              saved = true;
+              break;
+            }
+          }
+          if (!saved) {
+            alert("배경 이미지를 저장하지 못했습니다. 더 작은 이미지를 선택해 주세요.");
+            return;
+          }
+          syncBackgroundPickerUi();
+          showSaveToast("배경 이미지가 변경되었습니다.");
+        })
+        .catch(function () {
+          alert("이미지를 읽지 못했습니다.");
+        })
+        .then(function () {
+          if (btnPickBackground) btnPickBackground.disabled = false;
+        });
+    };
+    reader.onerror = function () {
+      if (btnPickBackground) btnPickBackground.disabled = false;
+      alert("파일을 읽지 못했습니다.");
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function bindBackgroundPicker() {
+    if (!btnPickBackground || btnPickBackground.dataset.bound) return;
+    btnPickBackground.dataset.bound = "1";
+    if (inputBackgroundImage) {
+      btnPickBackground.addEventListener("click", function () {
+        inputBackgroundImage.click();
+      });
+      inputBackgroundImage.addEventListener("change", function () {
+        var f = inputBackgroundImage.files && inputBackgroundImage.files[0];
+        inputBackgroundImage.value = "";
+        applyPickedBackgroundFile(f);
+      });
+    }
+    if (btnResetBackground) {
+      btnResetBackground.addEventListener("click", function () {
+        if (typeof MetisTimer.clearTimerBackground === "function") {
+          MetisTimer.clearTimerBackground();
+        }
+        syncBackgroundPickerUi();
+        showSaveToast("기본 배경 이미지로 되돌렸습니다.");
+      });
+    }
+    syncBackgroundPickerUi();
+  }
+
   function setStatNumberInputIfNotFocused(id, rawVal) {
     var el = document.getElementById(id);
     if (!el || el.tagName !== "INPUT") return;
@@ -1897,6 +2023,7 @@
     );
     paintHomeLevel(s);
     fillMetaInputsFromRemoteState({ force: !!options.forceMeta });
+    syncBackgroundPickerUi();
   }
 
   function parseTimeToSec(mmss) {
@@ -2700,6 +2827,7 @@
   bindEntryPlayerCounters();
   bindEntryChipsCounter();
   bindMetaFormOnce();
+  bindBackgroundPicker();
 
   presetSelect.addEventListener("change", function () {
     activatePreset(presetSelect.value);
